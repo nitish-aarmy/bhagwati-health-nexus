@@ -92,7 +92,7 @@ function CrmPage() {
         phone,
         direction: "outgoing",
         outcome: "connected",
-        ...(auth.user?.id ? { agent_id: auth.user.id } : {}),
+        ...(auth.user?.id ? { staff_id: auth.user.id } : {}),
       });
       if (error) throw error;
     },
