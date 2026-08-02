@@ -55,9 +55,20 @@ function PatientsPage() {
       const raw = Object.fromEntries(form.entries());
       const parsed = patientSchema.safeParse(raw);
       if (!parsed.success) throw new Error(parsed.error.issues[0]!.message);
+      const v = parsed.data;
       const { data: inserted, error } = await supabase
         .from("patients")
-        .insert({ ...parsed.data, age: parsed.data.age ?? null })
+        .insert({
+          full_name: v.full_name,
+          phone: v.phone,
+          gender: v.gender || "other",
+          age: v.age ?? null,
+          blood_group: v.blood_group || null,
+          address: v.address || null,
+          lead_source: v.lead_source || null,
+          referring_doctor: v.referring_doctor || null,
+          allergies: v.allergies || null,
+        })
         .select()
         .single();
       if (error) throw error;
