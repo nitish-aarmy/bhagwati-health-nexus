@@ -38,7 +38,7 @@ function CrmPage() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [patientId, setPatientId] = useState("");
-  const [channel, setChannel] = useState("call");
+  const [channel, setChannel] = useState("revisit");
   const followUps = useQuery(followUpsQuery());
   const calls = useQuery(callLogsQuery());
   const patients = useQuery(patientsQuery(""));
@@ -53,7 +53,7 @@ function CrmPage() {
         .insert({
           patient_id: patientId,
           due_date: new Date(dueAt).toISOString(),
-          type: channel as "call" | "whatsapp" | "sms",
+          type: channel as "revisit" | "lab" | "medicine" | "payment" | "vaccination" | "custom",
           message: String(form.get("notes") ?? "") || String(form.get("reason") ?? "") || null,
         })
         .select()
@@ -92,7 +92,7 @@ function CrmPage() {
         phone,
         direction: "outgoing",
         outcome: "connected",
-        agent_id: auth.user?.id ?? null,
+        ...(auth.user?.id ? { agent_id: auth.user.id } : {}),
       });
       if (error) throw error;
     },
@@ -149,15 +149,18 @@ function CrmPage() {
                   <Input id="due_at" name="due_at" type="datetime-local" required />
                 </div>
                 <div className="space-y-2">
-                  <Label>Channel</Label>
+                  <Label>Type</Label>
                   <Select value={channel} onValueChange={setChannel}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="call">Phone call</SelectItem>
-                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                      <SelectItem value="sms">SMS</SelectItem>
+                      <SelectItem value="revisit">Revisit</SelectItem>
+                      <SelectItem value="lab">Lab report</SelectItem>
+                      <SelectItem value="medicine">Medicine refill</SelectItem>
+                      <SelectItem value="payment">Payment due</SelectItem>
+                      <SelectItem value="vaccination">Vaccination</SelectItem>
+                      <SelectItem value="custom">Custom</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
