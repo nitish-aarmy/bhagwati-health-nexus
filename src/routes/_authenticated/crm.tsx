@@ -52,10 +52,9 @@ function CrmPage() {
         .from("follow_ups")
         .insert({
           patient_id: patientId,
-          due_at: new Date(dueAt).toISOString(),
-          channel,
-          reason: String(form.get("reason") ?? "") || null,
-          notes: String(form.get("notes") ?? "") || null,
+          due_date: new Date(dueAt).toISOString(),
+          type: channel as "call" | "whatsapp" | "sms",
+          message: String(form.get("notes") ?? "") || String(form.get("reason") ?? "") || null,
         })
         .select()
         .single();
@@ -76,7 +75,7 @@ function CrmPage() {
     mutationFn: async (id: string) => {
       const { error } = await supabase
         .from("follow_ups")
-        .update({ status: "completed", completed_at: new Date().toISOString() })
+        .update({ is_done: true, outcome: "completed" })
         .eq("id", id);
       if (error) throw error;
       await recordAudit({ action: "follow_up.completed", entity: "follow_ups", entityId: id });
@@ -91,7 +90,7 @@ function CrmPage() {
       const { error } = await supabase.from("call_logs").insert({
         patient_id: patient,
         phone,
-        direction: "outbound",
+        direction: "outgoing",
         outcome: "connected",
         agent_id: auth.user?.id ?? null,
       });
@@ -104,7 +103,7 @@ function CrmPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const pending = (followUps.data ?? []).filter((f) => f.status !== "completed");
+  const pending = (followUps.data ?? []).filter((f) => !f.is_done);
 
   return (
     <div>
@@ -195,11 +194,11 @@ function CrmPage() {
                   <div className="min-w-0">
                     <p className="font-medium">{f.patients?.full_name ?? "Patient"}</p>
                     <p className="text-xs text-muted-foreground">
-                      {f.reason || "Follow-up"} · due {new Date(f.due_at).toLocaleString()}
+                      {f.message || "Follow-up"} · due {new Date(f.due_date).toLocaleString()}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline">{f.channel}</Badge>
+                    <Badge variant="outline">{f.type}</Badge>
                     {f.patients?.phone && (
                       <Button
                         size="sm"
