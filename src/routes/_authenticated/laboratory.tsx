@@ -90,17 +90,23 @@ function LaboratoryPage() {
       status?: (typeof LAB_STATUSES)[number];
       result?: string;
     }) => {
-      const patch: Record<string, unknown> = {};
+      const patch: {
+        status?: (typeof LAB_STATUSES)[number];
+        collected_at?: string;
+        approved_at?: string;
+        approved_by?: string | null;
+        result_summary?: string;
+      } = {};
       if (status) {
-        patch["status"] = status;
-        if (status === "sample_collected") patch["collected_at"] = new Date().toISOString();
+        patch.status = status;
+        if (status === "sample_collected") patch.collected_at = new Date().toISOString();
         if (status === "approved") {
           const { data: auth } = await supabase.auth.getUser();
-          patch["approved_at"] = new Date().toISOString();
-          patch["approved_by"] = auth.user?.id ?? null;
+          patch.approved_at = new Date().toISOString();
+          patch.approved_by = auth.user?.id ?? null;
         }
       }
-      if (result !== undefined) patch["result_summary"] = result;
+      if (result !== undefined) patch.result_summary = result;
       const { error } = await supabase.from("lab_orders").update(patch).eq("id", id);
       if (error) throw error;
       await recordAudit({ action: "lab_order.updated", entity: "lab_orders", entityId: id, metadata: patch });
