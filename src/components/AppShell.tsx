@@ -5,6 +5,7 @@ import {
   FlaskConical,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   Moon,
   Receipt,
   ShieldCheck,
@@ -34,6 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "laboratory", label: "Laboratory", to: "/laboratory", icon: FlaskConical },
   { key: "billing", label: "Billing", to: "/billing", icon: Receipt },
   { key: "followups", label: "CRM & Follow-ups", to: "/crm", icon: BellRing },
+  { key: "followups", label: "Enquiries", to: "/enquiries", icon: MessageSquare },
   { key: "administration", label: "Administration", to: "/administration", icon: ShieldCheck },
   { key: "portal", label: "My Health", to: "/portal", icon: Activity },
 ];

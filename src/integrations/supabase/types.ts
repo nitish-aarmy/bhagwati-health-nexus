@@ -159,6 +159,57 @@ export type Database = {
           },
         ]
       }
+      enquiries: {
+        Row: {
+          city: string | null
+          created_at: string
+          department: string | null
+          email: string | null
+          full_name: string
+          handled_by: string | null
+          id: string
+          message: string | null
+          phone: string
+          preferred_date: string | null
+          source: string
+          staff_notes: string | null
+          status: Database["public"]["Enums"]["enquiry_status"]
+          updated_at: string
+        }
+        Insert: {
+          city?: string | null
+          created_at?: string
+          department?: string | null
+          email?: string | null
+          full_name: string
+          handled_by?: string | null
+          id?: string
+          message?: string | null
+          phone: string
+          preferred_date?: string | null
+          source?: string
+          staff_notes?: string | null
+          status?: Database["public"]["Enums"]["enquiry_status"]
+          updated_at?: string
+        }
+        Update: {
+          city?: string | null
+          created_at?: string
+          department?: string | null
+          email?: string | null
+          full_name?: string
+          handled_by?: string | null
+          id?: string
+          message?: string | null
+          phone?: string
+          preferred_date?: string | null
+          source?: string
+          staff_notes?: string | null
+          status?: Database["public"]["Enums"]["enquiry_status"]
+          updated_at?: string
+        }
+        Relationships: []
+      }
       follow_ups: {
         Row: {
           assigned_to: string | null
@@ -531,6 +582,7 @@ export type Database = {
         | "cancelled"
         | "no_show"
       call_direction: "outgoing" | "incoming" | "missed"
+      enquiry_status: "new" | "contacted" | "converted" | "closed"
       followup_type:
         | "medicine"
         | "appointment"
@@ -709,6 +761,7 @@ export const Constants = {
         "no_show",
       ],
       call_direction: ["outgoing", "incoming", "missed"],
+      enquiry_status: ["new", "contacted", "converted", "closed"],
       followup_type: [
         "medicine",
         "appointment",

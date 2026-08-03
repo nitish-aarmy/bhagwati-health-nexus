@@ -65,6 +65,9 @@ function Index() {
             <Button asChild size="lg" variant="secondary">
               <Link to="/auth">Patient portal</Link>
             </Button>
+            <Button asChild size="lg" variant="outline">
+              <Link to="/enquiry">Patient enquiry</Link>
+            </Button>
           </div>
         </section>
 
