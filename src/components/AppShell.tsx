@@ -5,6 +5,7 @@ import {
   FlaskConical,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   Moon,
   Receipt,
   ShieldCheck,
