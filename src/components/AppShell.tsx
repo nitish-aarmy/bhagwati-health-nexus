@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   LogOut,
   Moon,
-  PhoneCall,
   Receipt,
   ShieldCheck,
   Sun,
@@ -34,8 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "appointments", label: "Appointments", to: "/appointments", icon: CalendarDays },
   { key: "laboratory", label: "Laboratory", to: "/laboratory", icon: FlaskConical },
   { key: "billing", label: "Billing", to: "/billing", icon: Receipt },
-  { key: "followups", label: "Follow-ups", to: "/followups", icon: BellRing },
-  { key: "calls", label: "Call Centre", to: "/calls", icon: PhoneCall },
+  { key: "followups", label: "CRM & Follow-ups", to: "/crm", icon: BellRing },
   { key: "administration", label: "Administration", to: "/administration", icon: ShieldCheck },
   { key: "portal", label: "My Health", to: "/portal", icon: Activity },
 ];
