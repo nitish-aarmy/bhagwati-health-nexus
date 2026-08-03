@@ -1,10 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, FlaskConical, Receipt } from "lucide-react";
+import { toast } from "sonner";
+import { z } from "zod";
 
 import { PageHeader } from "@/components/AppShell";
-import { EmptyState } from "@/components/StatCard";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { EmptyState } from "@/components/StatCard";
 import { supabase } from "@/integrations/supabase/client";
 import { formatCurrency } from "@/lib/audit";
 
@@ -59,15 +65,7 @@ function PortalPage() {
   const data = portal.data;
 
   if (!data?.patient) {
-    return (
-      <div>
-        <PageHeader title="My health" description="Your personal hospital record." />
-        <EmptyState
-          title="No patient record linked yet"
-          description="Visit the reception desk at Bhagwati Hospital, Daltonganj to link your account to your UHID."
-        />
-      </div>
-    );
+    return <SelfRegistration loading={portal.isLoading} />;
   }
 
   return (
