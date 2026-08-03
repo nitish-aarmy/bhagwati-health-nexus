@@ -120,3 +120,17 @@ export const staffQuery = () =>
       }));
     },
   });
+
+export const enquiriesQuery = () =>
+  queryOptions({
+    queryKey: ["enquiries"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("enquiries")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
