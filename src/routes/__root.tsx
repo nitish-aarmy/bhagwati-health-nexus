@@ -81,17 +81,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Bhagwati Smart Hospital ERP" },
       {
         name: "description",
-        content: "Secure hospital operating system for Bhagwati Hospital, Daltonganj.",
+        content:
+          "Unified ERP, EMR and CRM platform for Bhagwati Hospital with secure role-based workflows.",
       },
       { name: "author", content: "Bhagwati Hospital" },
       { property: "og:title", content: "Bhagwati Smart Hospital ERP" },
       {
         property: "og:description",
-        content: "Secure hospital operating system for Bhagwati Hospital, Daltonganj.",
+        content: "One Hospital. One Secure Platform.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "theme-color", content: "#0e5aa7" },
     ],
     links: [
       {
@@ -128,7 +129,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
-      <Toaster />
+      <Toaster position="top-right" richColors />
     </QueryClientProvider>
   );
 }

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Phone, PhoneCall, Plus, Sparkles } from "lucide-react";
@@ -31,6 +31,9 @@ import { recordAudit } from "@/lib/audit";
 import { callLogsQuery, followUpsQuery, patientsQuery } from "@/lib/queries";
 
 export const Route = createFileRoute("/_authenticated/crm")({
+  beforeLoad: async () => {
+    throw redirect({ to: "/followups" });
+  },
   component: CrmPage,
 });
 

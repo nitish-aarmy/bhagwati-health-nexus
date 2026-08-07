@@ -1,5 +1,74 @@
 # Bhagwati Health Nexus
 
+## Local Storage Mode (No Supabase Required)
+
+This app now runs fully on your local computer storage (browser localStorage) and does not require a Supabase project for day-to-day usage.
+
+### Run
+
+```bash
+npm install
+npm run dev
+```
+
+### Default Demo Accounts
+
+- Admin
+	- Email: `admin@bhagwati.local`
+	- Password: `Admin@12345`
+- Patient
+	- Email: `patient@bhagwati.local`
+	- Password: `Patient@12345`
+	- Mobile login: `9999999902` / `Patient@12345`
+
+### Patient Self Registration (Mobile)
+
+- Any new patient can create an account directly from the app using:
+	- Full name
+	- Mobile number
+	- Password
+- After registration, the patient account is auto-created with patient role and portal access.
+
+### Patient Portal Highlights
+
+- OPD/IPD booking request from one form
+- IPD admission tracking panel
+- Invoice list with paid vs due breakdown
+- Payment transaction history (ledger view)
+
+### Local Database Management
+
+Open **Administration** module to access:
+
+- Export JSON backup
+- Import JSON backup
+- Export encrypted backup (AES-GCM with passphrase)
+- Import encrypted backup
+- Reset local database
+
+### Notes
+
+- Data is stored per browser profile on this machine.
+- Clearing browser site data/localStorage removes the data unless you exported a backup.
+- Encrypted backup import requires the same passphrase used during export.
+
+### Real Mobile OTP (Fast2SMS)
+
+To enable real SMS delivery for password reset OTP, create a `.env` file in project root with:
+
+```bash
+FAST2SMS_API_KEY=your_fast2sms_api_key
+FAST2SMS_SENDER_ID=BHHOSP
+FAST2SMS_OTP_MESSAGE=Bhagwati Hospital OTP: {otp}. Valid for 10 minutes.
+```
+
+Notes:
+
+- Restart dev server after updating `.env`.
+- If API key is not configured, app falls back to demo OTP display for testing.
+- For backward compatibility, `VITE_FAST2SMS_*` vars are still accepted but server-side vars are recommended.
+
+
 You are a team of world-class software architects, UI/UX designers, healthcare software engineers, cybersecurity experts, database architects, DevOps engineers, mobile developers, Electron developers, React developers, Node.js developers, TypeScript experts, and healthcare workflow consultants.
 
 Your task is to design and develop a production-grade Hospital ERP + EMR + CRM system for Bhagwati Hospital, Daltonganj, India.

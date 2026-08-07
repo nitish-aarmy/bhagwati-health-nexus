@@ -24,8 +24,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { recordAudit } from "@/lib/audit";
 import { patientsQuery } from "@/lib/queries";
+import { guardModuleAccess } from "@/lib/route-guards";
 
 export const Route = createFileRoute("/_authenticated/patients")({
+  beforeLoad: guardModuleAccess("patients"),
   component: PatientsPage,
 });
 

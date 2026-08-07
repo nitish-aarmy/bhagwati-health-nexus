@@ -16,12 +16,15 @@ import { Route as EnquiryRouteImport } from './routes/enquiry'
 import { Route as AuthenticatedAdministrationRouteImport } from './routes/_authenticated/administration'
 import { Route as AuthenticatedAppointmentsRouteImport } from './routes/_authenticated/appointments'
 import { Route as AuthenticatedBillingRouteImport } from './routes/_authenticated/billing'
+import { Route as AuthenticatedCallsRouteImport } from './routes/_authenticated/calls'
 import { Route as AuthenticatedCrmRouteImport } from './routes/_authenticated/crm'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedEnquiriesRouteImport } from './routes/_authenticated/enquiries'
+import { Route as AuthenticatedFollowupsRouteImport } from './routes/_authenticated/followups'
 import { Route as AuthenticatedLaboratoryRouteImport } from './routes/_authenticated/laboratory'
 import { Route as AuthenticatedPatientsRouteImport } from './routes/_authenticated/patients'
 import { Route as AuthenticatedPortalRouteImport } from './routes/_authenticated/portal'
+import { Route as AuthenticatedReferralsRouteImport } from './routes/_authenticated/referrals'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -59,6 +62,11 @@ const AuthenticatedBillingRoute = AuthenticatedBillingRouteImport.update({
   path: '/billing',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedCallsRoute = AuthenticatedCallsRouteImport.update({
+  id: '/calls',
+  path: '/calls',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedCrmRoute = AuthenticatedCrmRouteImport.update({
   id: '/crm',
   path: '/crm',
@@ -72,6 +80,11 @@ const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
 const AuthenticatedEnquiriesRoute = AuthenticatedEnquiriesRouteImport.update({
   id: '/enquiries',
   path: '/enquiries',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedFollowupsRoute = AuthenticatedFollowupsRouteImport.update({
+  id: '/followups',
+  path: '/followups',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedLaboratoryRoute = AuthenticatedLaboratoryRouteImport.update({
@@ -89,6 +102,11 @@ const AuthenticatedPortalRoute = AuthenticatedPortalRouteImport.update({
   path: '/portal',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedReferralsRoute = AuthenticatedReferralsRouteImport.update({
+  id: '/referrals',
+  path: '/referrals',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -97,12 +115,15 @@ export interface FileRoutesByFullPath {
   '/administration': typeof AuthenticatedAdministrationRoute
   '/appointments': typeof AuthenticatedAppointmentsRoute
   '/billing': typeof AuthenticatedBillingRoute
+  '/calls': typeof AuthenticatedCallsRoute
   '/crm': typeof AuthenticatedCrmRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/enquiries': typeof AuthenticatedEnquiriesRoute
+  '/followups': typeof AuthenticatedFollowupsRoute
   '/laboratory': typeof AuthenticatedLaboratoryRoute
   '/patients': typeof AuthenticatedPatientsRoute
   '/portal': typeof AuthenticatedPortalRoute
+  '/referrals': typeof AuthenticatedReferralsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -111,12 +132,15 @@ export interface FileRoutesByTo {
   '/administration': typeof AuthenticatedAdministrationRoute
   '/appointments': typeof AuthenticatedAppointmentsRoute
   '/billing': typeof AuthenticatedBillingRoute
+  '/calls': typeof AuthenticatedCallsRoute
   '/crm': typeof AuthenticatedCrmRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/enquiries': typeof AuthenticatedEnquiriesRoute
+  '/followups': typeof AuthenticatedFollowupsRoute
   '/laboratory': typeof AuthenticatedLaboratoryRoute
   '/patients': typeof AuthenticatedPatientsRoute
   '/portal': typeof AuthenticatedPortalRoute
+  '/referrals': typeof AuthenticatedReferralsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -127,12 +151,15 @@ export interface FileRoutesById {
   '/_authenticated/administration': typeof AuthenticatedAdministrationRoute
   '/_authenticated/appointments': typeof AuthenticatedAppointmentsRoute
   '/_authenticated/billing': typeof AuthenticatedBillingRoute
+  '/_authenticated/calls': typeof AuthenticatedCallsRoute
   '/_authenticated/crm': typeof AuthenticatedCrmRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/enquiries': typeof AuthenticatedEnquiriesRoute
+  '/_authenticated/followups': typeof AuthenticatedFollowupsRoute
   '/_authenticated/laboratory': typeof AuthenticatedLaboratoryRoute
   '/_authenticated/patients': typeof AuthenticatedPatientsRoute
   '/_authenticated/portal': typeof AuthenticatedPortalRoute
+  '/_authenticated/referrals': typeof AuthenticatedReferralsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -143,12 +170,15 @@ export interface FileRouteTypes {
     | '/administration'
     | '/appointments'
     | '/billing'
+    | '/calls'
     | '/crm'
     | '/dashboard'
     | '/enquiries'
+    | '/followups'
     | '/laboratory'
     | '/patients'
     | '/portal'
+    | '/referrals'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -157,12 +187,15 @@ export interface FileRouteTypes {
     | '/administration'
     | '/appointments'
     | '/billing'
+    | '/calls'
     | '/crm'
     | '/dashboard'
     | '/enquiries'
+    | '/followups'
     | '/laboratory'
     | '/patients'
     | '/portal'
+    | '/referrals'
   id:
     | '__root__'
     | '/'
@@ -172,12 +205,15 @@ export interface FileRouteTypes {
     | '/_authenticated/administration'
     | '/_authenticated/appointments'
     | '/_authenticated/billing'
+    | '/_authenticated/calls'
     | '/_authenticated/crm'
     | '/_authenticated/dashboard'
     | '/_authenticated/enquiries'
+    | '/_authenticated/followups'
     | '/_authenticated/laboratory'
     | '/_authenticated/patients'
     | '/_authenticated/portal'
+    | '/_authenticated/referrals'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -238,6 +274,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedBillingRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/calls': {
+      id: '/_authenticated/calls'
+      path: '/calls'
+      fullPath: '/calls'
+      preLoaderRoute: typeof AuthenticatedCallsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/crm': {
       id: '/_authenticated/crm'
       path: '/crm'
@@ -257,6 +300,13 @@ declare module '@tanstack/react-router' {
       path: '/enquiries'
       fullPath: '/enquiries'
       preLoaderRoute: typeof AuthenticatedEnquiriesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/followups': {
+      id: '/_authenticated/followups'
+      path: '/followups'
+      fullPath: '/followups'
+      preLoaderRoute: typeof AuthenticatedFollowupsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/laboratory': {
@@ -280,6 +330,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPortalRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/referrals': {
+      id: '/_authenticated/referrals'
+      path: '/referrals'
+      fullPath: '/referrals'
+      preLoaderRoute: typeof AuthenticatedReferralsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
@@ -287,24 +344,30 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAdministrationRoute: typeof AuthenticatedAdministrationRoute
   AuthenticatedAppointmentsRoute: typeof AuthenticatedAppointmentsRoute
   AuthenticatedBillingRoute: typeof AuthenticatedBillingRoute
+  AuthenticatedCallsRoute: typeof AuthenticatedCallsRoute
   AuthenticatedCrmRoute: typeof AuthenticatedCrmRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedEnquiriesRoute: typeof AuthenticatedEnquiriesRoute
+  AuthenticatedFollowupsRoute: typeof AuthenticatedFollowupsRoute
   AuthenticatedLaboratoryRoute: typeof AuthenticatedLaboratoryRoute
   AuthenticatedPatientsRoute: typeof AuthenticatedPatientsRoute
   AuthenticatedPortalRoute: typeof AuthenticatedPortalRoute
+  AuthenticatedReferralsRoute: typeof AuthenticatedReferralsRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAdministrationRoute: AuthenticatedAdministrationRoute,
   AuthenticatedAppointmentsRoute: AuthenticatedAppointmentsRoute,
   AuthenticatedBillingRoute: AuthenticatedBillingRoute,
+  AuthenticatedCallsRoute: AuthenticatedCallsRoute,
   AuthenticatedCrmRoute: AuthenticatedCrmRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedEnquiriesRoute: AuthenticatedEnquiriesRoute,
+  AuthenticatedFollowupsRoute: AuthenticatedFollowupsRoute,
   AuthenticatedLaboratoryRoute: AuthenticatedLaboratoryRoute,
   AuthenticatedPatientsRoute: AuthenticatedPatientsRoute,
   AuthenticatedPortalRoute: AuthenticatedPortalRoute,
+  AuthenticatedReferralsRoute: AuthenticatedReferralsRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
@@ -319,3 +382,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

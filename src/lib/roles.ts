@@ -48,6 +48,7 @@ export type ModuleKey =
   | "laboratory"
   | "billing"
   | "followups"
+  | "referrals"
   | "calls"
   | "administration"
   | "portal";
@@ -63,13 +64,21 @@ export const MODULE_ACCESS: Record<ModuleKey, AppRole[]> = {
   laboratory: [...ADMIN_ROLES, "doctor", "pathologist", "lab_technician", "radiologist", "nurse"],
   billing: [...ADMIN_ROLES, ...FINANCE, "receptionist"],
   followups: [...ADMIN_ROLES, ...FRONT_DESK, "nurse"],
+  referrals: [...ADMIN_ROLES, ...FRONT_DESK, "doctor", "nurse"],
   calls: [...ADMIN_ROLES, ...FRONT_DESK],
   administration: ADMIN_ROLES,
   portal: ["patient"],
 };
 
 export function canAccess(module: ModuleKey, roles: AppRole[]): boolean {
+  if (module === "portal") {
+    return isPatientOnly(roles);
+  }
   return roles.some((role) => MODULE_ACCESS[module].includes(role));
+}
+
+export function isPatientOnly(roles: AppRole[]): boolean {
+  return roles.includes("patient") && !roles.some((role) => role !== "patient");
 }
 
 export function isStaff(roles: AppRole[]): boolean {

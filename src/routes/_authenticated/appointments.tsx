@@ -28,8 +28,10 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { recordAudit } from "@/lib/audit";
 import { appointmentsQuery, patientsQuery } from "@/lib/queries";
+import { guardModuleAccess } from "@/lib/route-guards";
 
 export const Route = createFileRoute("/_authenticated/appointments")({
+  beforeLoad: guardModuleAccess("appointments"),
   component: AppointmentsPage,
 });
 

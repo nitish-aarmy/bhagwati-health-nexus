@@ -84,5 +84,8 @@ export function useSignOut() {
   return async () => {
     await supabase.auth.signOut();
     queryClient.clear();
+    if (typeof window !== "undefined") {
+      window.location.href = "/auth";
+    }
   };
 }

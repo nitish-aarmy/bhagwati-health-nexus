@@ -9,8 +9,10 @@ import { useCurrentUser } from "@/hooks/useAuth";
 import { formatCurrency } from "@/lib/audit";
 import { appointmentsQuery, followUpsQuery, invoicesQuery, labOrdersQuery, patientsQuery } from "@/lib/queries";
 import { primaryRoleLabel } from "@/lib/roles";
+import { guardModuleAccess } from "@/lib/route-guards";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
+  beforeLoad: guardModuleAccess("dashboard"),
   component: DashboardPage,
 });
 
@@ -71,7 +73,7 @@ function DashboardPage() {
                       {new Date(a.scheduled_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </p>
                   </div>
-                  <Badge variant="secondary">{a.status.replace(/_/g, " ")}</Badge>
+                  <Badge variant="secondary">{String(a.status ?? "scheduled").replace(/_/g, " ")}</Badge>
                 </li>
               ))}
             </ul>

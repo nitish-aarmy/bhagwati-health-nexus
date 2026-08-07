@@ -28,8 +28,10 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { formatCurrency, recordAudit } from "@/lib/audit";
 import { invoicesQuery, patientsQuery } from "@/lib/queries";
+import { guardModuleAccess } from "@/lib/route-guards";
 
 export const Route = createFileRoute("/_authenticated/billing")({
+  beforeLoad: guardModuleAccess("billing"),
   component: BillingPage,
 });
 
@@ -74,6 +76,20 @@ function BillingPage() {
         .select()
         .single();
       if (error) throw error;
+
+      if (paid > 0) {
+        const { error: txError } = await supabase.from("payment_transactions").insert({
+          patient_id: patientId,
+          invoice_id: inserted.id,
+          transaction_type: "payment",
+          amount: paid,
+          payment_mode: mode,
+          balance_after: Math.max(total - paid, 0),
+          notes: "Initial payment at invoice creation",
+        });
+        if (txError) throw txError;
+      }
+
       await recordAudit({
         action: "invoice.created",
         entity: "invoices",
@@ -93,11 +109,37 @@ function BillingPage() {
 
   const settle = useMutation({
     mutationFn: async (invoice: { id: string; total: number }) => {
+      const { data: currentRows, error: currentError } = await supabase
+        .from("invoices")
+        .select("id, patient_id, paid_amount, total")
+        .eq("id", invoice.id)
+        .limit(1);
+      if (currentError) throw currentError;
+      const current = (currentRows ?? [])[0];
+      if (!current) throw new Error("Invoice not found");
+
+      const alreadyPaid = Number(current.paid_amount);
+      const remaining = Math.max(Number(current.total) - alreadyPaid, 0);
+
       const { error } = await supabase
         .from("invoices")
         .update({ paid_amount: invoice.total, status: "paid" })
         .eq("id", invoice.id);
       if (error) throw error;
+
+      if (remaining > 0) {
+        const { error: txError } = await supabase.from("payment_transactions").insert({
+          patient_id: current.patient_id,
+          invoice_id: invoice.id,
+          transaction_type: "payment",
+          amount: remaining,
+          payment_mode: "cash",
+          balance_after: 0,
+          notes: "Settlement payment",
+        });
+        if (txError) throw txError;
+      }
+
       await recordAudit({ action: "invoice.settled", entity: "invoices", entityId: invoice.id });
     },
     onSuccess: () => {

@@ -9,15 +9,17 @@ export function StatCard({
   label: string;
   value: string | number;
   hint?: string;
-  icon: LucideIcon;
+  icon?: LucideIcon;
 }) {
   return (
     <div className="neo p-5 transition-smooth hover:-translate-y-0.5">
       <div className="flex items-start justify-between">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-        <span className="neo-inset flex size-9 items-center justify-center text-primary">
-          <Icon className="size-4" />
-        </span>
+        {Icon ? (
+          <span className="neo-inset flex size-9 items-center justify-center text-primary">
+            <Icon className="size-4" />
+          </span>
+        ) : null}
       </div>
       <p className="mt-4 font-display text-3xl font-semibold">{value}</p>
       {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
