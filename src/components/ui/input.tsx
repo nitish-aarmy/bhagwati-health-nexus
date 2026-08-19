@@ -21,7 +21,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
     return (
       <input
         type={type}
-        autoCapitalize={autoCapitalize ?? (shouldUppercase ? "characters" : undefined)}
+        autoCapitalize={autoCapitalize}
         className={cn(
           "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
           shouldUppercase && "uppercase placeholder:uppercase",
@@ -29,12 +29,6 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
         )}
         ref={ref}
         onChange={(event) => {
-          if (shouldUppercase) {
-            const upper = event.target.value.toUpperCase();
-            if (upper !== event.target.value) {
-              event.target.value = upper;
-            }
-          }
           onChange?.(event);
         }}
         {...props}

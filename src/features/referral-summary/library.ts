@@ -26,16 +26,11 @@ export const COMPLAINTS_LIBRARY = [
 ];
 
 export const TREATMENT_LIBRARY = [
-  "IV fluids and electrolyte correction",
-  "Broad spectrum antibiotics",
+  "IV fluids",
+  "IV antibiotics",
   "Analgesics and antipyretics",
   "Nebulization and oxygen support",
-  "Insulin sliding scale monitoring",
-  "DVT prophylaxis",
   "Wound care and dressing",
-  "Physiotherapy and mobilization",
-  "Blood sugar and BP monitoring",
-  "Transfusion support",
 ];
 
 export const SURGICAL_PROCEDURE_LIBRARY = [

@@ -1,9 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   FileText,
   HeartPulse,
+  Plus,
   Search,
   ShieldAlert,
   Stethoscope,
@@ -35,6 +37,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDateDMY, formatDateTimeDMY } from "@/lib/utils";
+import { guardModuleAccess } from "@/lib/route-guards";
 import {
   COMPLAINTS_LIBRARY,
   DIAGNOSIS_LIBRARY,
@@ -48,146 +51,108 @@ import {
   REFERRAL_TEMPLATES,
   TREATMENT_LIBRARY,
 } from "@/features/referral-summary/library";
+import { patientsQuery } from "@/lib/queries";
 import { EMPTY_MEDICATION_ROW, useReferralDraft } from "@/features/referral-summary/useReferralDraft";
+import { toast } from "sonner";
+import { jsPDF } from "jspdf";
+
+// Local helpers and constants (kept minimal to avoid SSR mismatches)
+const MEDICINE_LIBRARY_KEY = "bhagwati:medicine-library";
+const PATIENT_MEDICINE_LIBRARY_KEY_BASE = "bhagwati:medicine-library:";
+const COMPLAINTS_USER_LIBRARY_KEY = "bhagwati:user:complaints";
+const DIAGNOSIS_USER_LIBRARY_KEY = "bhagwati:user:diagnosis";
+const TREATMENT_USER_LIBRARY_KEY = "bhagwati:user:treatment";
+const SURGICAL_PROCEDURE_LIBRARY_KEY = "bhagwati:user:surgical-procedures";
+const INVESTIGATION_CUSTOM_LIBRARY_KEY = "bhagwati:user:investigation-tests";
+const DIET_USER_LIBRARY_KEY = "bhagwati:user:diet";
+const DOS_USER_LIBRARY_KEY = "bhagwati:user:dos";
+const DONTS_USER_LIBRARY_KEY = "bhagwati:user:donots";
+const EMERGENCY_WARNING_USER_LIBRARY_KEY = "bhagwati:user:emergency-warnings";
+const DOCTOR_LIBRARY_KEY = "bhagwati:user:doctors";
+
+const PRESET_MEDICINE_LIBRARY: MedicineLibraryItem[] = [];
+const MEDICINE_TYPES: MedicationRow["medicineType"][] = ["TAB", "CAP", "SYP", "INJ", "IV", "ML"];
+
+const DEFAULT_DOCTOR_PROFILE: DoctorProfile = {
+  id: "default-archana-tiwari-pandey",
+  name: "DR ARCHANA TIWARI PANDEY",
+  degree: "MBBS (HONS) DGO",
+  details: "CONSULTANT GYNECOLOGIST & OBSTETRICIAN",
+};
+
+const ALL_REPORTS_ATTACHED_TEST_ID = "all_reports_attached";
+const ALL_REPORTS_ATTACHED_LABEL = "ALL REPORTS ATTACHED";
+
+function createId() {
+  if (typeof globalThis !== "undefined" && globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `id_${Date.now().toString(36)}_${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeDetail(value?: string) {
+  return String(value ?? "").trim();
+}
+
+function toUpper(value: string) {
+  return String(value ?? "").toUpperCase();
+}
+
+function hasText(value?: string) {
+  return String(value ?? "").trim().length > 0;
+}
+
+function doctorDisplayName(doctor: DoctorProfile) {
+  return [doctor.name, doctor.degree, doctor.details].filter(hasText).join(", ");
+}
+
+function joinNonEmpty(items: string[]) {
+  return items.filter((s) => hasText(s)).join(", ");
+}
+
+function escapeHtml(unsafe: string) {
+  return String(unsafe)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function doctorPrintHtml(name: string) {
+  return escapeHtml(name || "");
+}
+
+function doctorPrintValue(name: string) {
+  return String(name || "");
+}
+
+function toInvestigationId(prefix: string, name: string) {
+  return `${prefix}_${String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+}
 import type {
+  DoctorProfile,
   FollowUpPreset,
   InvestigationRecord,
   MedicationRow,
   SummaryMode,
   SurgicalProcedureEntry,
 } from "@/features/referral-summary/types";
-import { patientsQuery } from "@/lib/queries";
-import { guardModuleAccess } from "@/lib/route-guards";
-import { useQuery } from "@tanstack/react-query";
-import { jsPDF } from "jspdf";
-import { toast } from "sonner";
-
-function createId() {
-  if (typeof globalThis !== "undefined" && globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
-  }
-  return `row-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function joinOrDash(items: string[]) {
-  return items.length > 0 ? items.join("; ") : "-";
-}
-
-function hasText(value: string | null | undefined) {
-  return Boolean(value && value.trim().length > 0);
-}
-
-function joinNonEmpty(items: string[]) {
-  return items.map((item) => item.trim()).filter((item) => item.length > 0).join("; ");
-}
-
-function toUpper(value: string) {
-  return value.toUpperCase();
-}
-
-const DIAGNOSIS_USER_LIBRARY_KEY = "bhagwati:referral-diagnosis-library";
-const COMPLAINTS_USER_LIBRARY_KEY = "bhagwati:referral-complaints-library";
-const TREATMENT_USER_LIBRARY_KEY = "bhagwati:referral-treatment-library";
-const DIET_USER_LIBRARY_KEY = "bhagwati:referral-diet-library";
-const DOS_USER_LIBRARY_KEY = "bhagwati:referral-dos-library";
-const DONTS_USER_LIBRARY_KEY = "bhagwati:referral-donts-library";
-const EMERGENCY_WARNING_USER_LIBRARY_KEY = "bhagwati:referral-emergency-warning-library";
-const SURGICAL_PROCEDURE_LIBRARY_KEY = "bhagwati:referral-surgical-procedure-library";
-const MEDICINE_LIBRARY_KEY = "bhagwati:referral-medicine-library";
-const INVESTIGATION_CUSTOM_LIBRARY_KEY = "bhagwati:referral-investigation-library";
-
-const MEDICINE_TYPES: Array<NonNullable<MedicationRow["medicineType"]>> = [
-  "TAB",
-  "CAPSULE",
-  "SYP",
-  "INJ",
-  "IV",
-  "FLUID",
-  "OINTMENT",
-];
-
-const DR_ARCHANA = "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO, CONSULTANT GYNECOLOGIST & OBSTETRICIAN";
-const DR_SUSHIL = "DR SUSHIL KUMAR PANDEY, MBBS, MS DNB (GEN SURGERY)";
-const DR_ARCHANA_SUSHIL = "DR ARCHANA + DR SUSHIL";
-const ALL_REPORTS_ATTACHED_TEST_ID = "all_reports_attached";
-const ALL_REPORTS_ATTACHED_LABEL = "ALL REPORTS ATTACHED";
-
-const DOCTOR_OPTIONS = [
-  DR_ARCHANA,
-  DR_SUSHIL,
-  DR_ARCHANA_SUSHIL,
-];
-
-function doctorPrintValue(doctorName: string) {
-  if (doctorName === DR_ARCHANA || doctorName === DR_ARCHANA_SUSHIL) {
-    return `${DR_ARCHANA}\n${DR_SUSHIL}`;
-  }
-  return doctorName || "-";
-}
-
-function doctorPrintHtml(doctorName: string) {
-  return escapeHtml(doctorPrintValue(doctorName)).replaceAll("\n", "<br />");
-}
 
 type MedicineLibraryItem = {
   id: string;
-  type: NonNullable<MedicationRow["medicineType"]>;
+  type: MedicationRow["medicineType"];
   name: string;
   suggestedDose?: string;
 };
 
-const PRESET_MEDICINE_LIBRARY: MedicineLibraryItem[] = [
-  { id: "preset-paracetamol-650", type: "TAB", name: "PARACETAMOL", suggestedDose: "650 MG" },
-  { id: "preset-pantoprazole-40", type: "TAB", name: "PANTOPRAZOLE", suggestedDose: "40 MG" },
-  { id: "preset-ondansetron-4", type: "TAB", name: "ONDANSETRON", suggestedDose: "4 MG" },
-  { id: "preset-azithromycin-500", type: "TAB", name: "AZITHROMYCIN", suggestedDose: "500 MG" },
-  { id: "preset-cefixime-200", type: "TAB", name: "CEFIXIME", suggestedDose: "200 MG" },
-  { id: "preset-amoxiclav-625", type: "TAB", name: "AMOXICLAV", suggestedDose: "625 MG" },
-  { id: "preset-metronidazole-400", type: "TAB", name: "METRONIDAZOLE", suggestedDose: "400 MG" },
-  { id: "preset-domperidone-10", type: "TAB", name: "DOMPERIDONE", suggestedDose: "10 MG" },
-  { id: "preset-ibuprofen-400", type: "TAB", name: "IBUPROFEN", suggestedDose: "400 MG" },
-  { id: "preset-diclofenac-50", type: "TAB", name: "DICLOFENAC", suggestedDose: "50 MG" },
-  { id: "preset-levocetirizine-5", type: "TAB", name: "LEVOCETIRIZINE", suggestedDose: "5 MG" },
-  { id: "preset-ambroxol-syp", type: "SYP", name: "AMBROXOL SYRUP", suggestedDose: "5 ML" },
-  { id: "preset-lactulose-syp", type: "SYP", name: "LACTULOSE SYRUP", suggestedDose: "15 ML" },
-  { id: "preset-vitb12-inj", type: "INJ", name: "METHYLCOBALAMIN", suggestedDose: "1 AMP" },
-  { id: "preset-ondansetron-inj", type: "INJ", name: "ONDANSETRON", suggestedDose: "2 ML" },
-];
+// cleaned stray insertion removed above; helper functions and the main createReferralHtml
+// implementation follow later in this file.
 
-function toInvestigationId(prefix: string, name: string) {
-  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  return `${prefix}_${slug || "test"}`;
-}
 
-function normalizeDetail(value: string) {
-  return value.toUpperCase();
-}
-
-function foodTimingLabel(value: MedicationRow["foodTiming"]) {
-  const labels: Record<MedicationRow["foodTiming"], string> = {
-    empty_stomach: "1 EMPTY STOMACH",
-    after_meal: "2 AFTER MEAL",
-    hs: "3 HS",
-    sos: "4 SOS",
-    before_breakfast: "5 BEFORE BREAKFAST",
-    after_breakfast: "6 AFTER BREAKFAST",
-    after_lunch: "7 AFTER LUNCH",
-    after_lunch_2: "8 AFTER LUNCH",
-  };
-  return labels[value];
-}
-
-function foodTimingPrintLabel(value: MedicationRow["foodTiming"]) {
-  const labels: Record<MedicationRow["foodTiming"], string> = {
+function foodTimingPrintLabel(value?: string) {
+  if (!value) return "";
+  const labels: Record<string, string> = {
     empty_stomach: "EMPTY STOMACH",
     after_meal: "AFTER MEAL",
     hs: "HS",
@@ -197,18 +162,25 @@ function foodTimingPrintLabel(value: MedicationRow["foodTiming"]) {
     after_lunch: "AFTER LUNCH",
     after_lunch_2: "AFTER LUNCH",
   };
-  return labels[value];
+  return labels[value] ?? "";
 }
 
 function medicationSchedulePrintBlock(row: MedicationRow) {
   const line1 = `${row.medicineType ? `${row.medicineType} ` : ""}${row.medicineName || "DRUG"}`.trim();
   const quantityDose = [row.strength?.trim(), row.dose?.trim()].filter(Boolean).join(" ");
-  const timeParts = [row.morning ? "MORNING" : "", row.afternoon ? "AFTERNOON" : "", row.night ? "NIGHT" : ""]
+  const timeParts = [
+    row.morning ? "OD" : "",
+    row.afternoon ? "BD" : "",
+    row.tds ? "TDS" : "",
+    row.night ? "NIGHT" : "",
+    row.hs ? "HS" : "",
+  ]
     .filter(Boolean)
     .join(" ");
-  const line2 = `${quantityDose || "DOSE"}${timeParts ? ` ${timeParts}` : ""}`;
+  const duration = row.durationDays ? `${row.durationDays} days` : "";
+  const line2 = `${quantityDose || "DOSE"}${timeParts ? ` ${timeParts}` : ""}${duration ? ` for ${duration}` : ""}`;
   const line3 = foodTimingPrintLabel(row.foodTiming);
-  return `${line1}\n${line2}\n${line3}`;
+  return `${line1}\n${line2}${line3 ? `\n${line3}` : ""}`;
 }
 
 function formatInvestigationRecord(record: InvestigationRecord) {
@@ -227,9 +199,9 @@ function formatInvestigationRecord(record: InvestigationRecord) {
 function formatInvestigationsForDocument(investigations: InvestigationRecord[]) {
   if (investigations.length === 0) return "-";
   if (investigations.some((investigation) => investigation.testId === ALL_REPORTS_ATTACHED_TEST_ID)) {
-    return ALL_REPORTS_ATTACHED_LABEL;
+    return ALL_REPORTS_ATTACHED_LABEL.replace(/ALL\s*/i, "");
   }
-  const withInlineReportTag = investigations.map(formatInvestigationRecord).join("; ");
+  const withInlineReportTag = investigations.map(formatInvestigationRecord).join(", ");
   const anyReportAttached = investigations.some((investigation) => investigation.reportAttached);
   if (!anyReportAttached) return withInlineReportTag;
 
@@ -242,7 +214,7 @@ function formatInvestigationsForDocument(investigations: InvestigationRecord[]) 
       if (parameterBits.length === 0) return record.testName;
       return `${record.testName} (${parameterBits.join(", ")})`;
     })
-    .join("; ");
+    .join(", ");
   return `${cleaned} (Report attached)`;
 }
 
@@ -264,6 +236,7 @@ function createReferralHtml({
     admissionDate: string;
     dischargeDate: string;
     doctorName: string;
+    doctors: DoctorProfile[];
     diagnosis: string[];
     chiefComplaints: string[];
     patientHistory: string;
@@ -285,146 +258,154 @@ function createReferralHtml({
     summaryMode: SummaryMode;
     dischargedToHome: boolean;
     patientStatusDuringDischarge: string;
+    provisionalDiagnosisText?: string;
     medication: MedicationRow[];
   };
 }) {
-  const medicationLines = draft.medication
-    .filter((m) => m.medicineName.trim().length > 0)
-    .map(medicationSchedulePrintBlock);
+  const medicationLines = draft.medication.filter((m) => m.medicineName.trim().length > 0).map(medicationSchedulePrintBlock);
+
   const summaryLabel = draft.summaryMode === "referral_summary" ? "REFERRAL SUMMARY" : "DISCHARGE SUMMARY";
 
-  const patientDetailRows = [
-    `<div><strong>Patient Name:</strong> ${escapeHtml(patientName)}</div>`,
-    hasText(ageGender) ? `<div><strong>Age/Sex:</strong> ${escapeHtml(ageGender)}</div>` : "",
-    hasText(draft.admissionDate) ? `<div><strong>Admission Date:</strong> ${escapeHtml(formatDateDMY(draft.admissionDate))}</div>` : "",
-    hasText(draft.dischargeDate) ? `<div><strong>Discharge Date:</strong> ${escapeHtml(formatDateDMY(draft.dischargeDate))}</div>` : "",
-    hasText(draft.doctorName)
-      ? `<div style="grid-column: 1 / -1;"><strong>Doctor Name:</strong> ${doctorPrintHtml(draft.doctorName)}</div>`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("");
+  // Render a stable two-column details block with aligned label: value pairs
+  const patientDetailRows = `
+    <div class="details-grid">
+      <div class="label">Patient Name</div><div class="value">: ${escapeHtml(patientName || "-")}</div>
+      <div class="label">Age/Sex</div><div class="value">: ${escapeHtml(ageGender || "-")}</div>
+      <div class="label">Admission Date</div><div class="value">: ${escapeHtml(hasText(draft.admissionDate) ? formatDateDMY(draft.admissionDate) : "-")}</div>
+      <div class="label">Discharge Date</div><div class="value">: ${escapeHtml(hasText(draft.dischargeDate) ? formatDateDMY(draft.dischargeDate) : "-")}</div>
+      <div class="label">TREATING DOCTORS</div><div class="value">: ${doctorPrintHtml(draft.doctors.length > 0 ? draft.doctors.map(doctorDisplayName).join("; ") : draft.doctorName || "-")}</div>
+    </div>
+  `;
 
-  const clinicalRows = [
-    draft.chiefComplaints.length > 0
-      ? `<div class="row"><strong>Chief Complaints:</strong> ${escapeHtml(joinNonEmpty(draft.chiefComplaints))}</div>`
-      : "",
-    hasText(draft.patientHistory) ? `<div class="row"><strong>History:</strong> ${escapeHtml(draft.patientHistory)}</div>` : "",
-    draft.diagnosis.length > 0
-      ? `<div class="row"><strong>Diagnosis:</strong> ${escapeHtml(joinNonEmpty(draft.diagnosis))}</div>`
-      : "",
-    draft.investigations.length > 0
-      ? `<div class="row"><strong>Investigations:</strong> ${escapeHtml(formatInvestigationsForDocument(draft.investigations))}</div>`
-      : "",
-    draft.surgicalProcedures.length > 0
-      ? `<div class="row"><strong>Surgical Procedure:</strong> ${escapeHtml(formatSurgicalProceduresForDocument(draft.surgicalProcedures))}</div>`
-      : "",
-    draft.treatmentGiven.length > 0
-      ? `<div class="row"><strong>Medical Management:</strong> ${escapeHtml(joinNonEmpty(draft.treatmentGiven))}</div>`
-      : "",
-    hasText(draft.doctorNotes) ? `<div class="row"><strong>Other Advice:</strong> ${escapeHtml(draft.doctorNotes)}</div>` : "",
-  ]
-    .filter(Boolean)
-    .join("");
+  const clinicalPairs: Array<[string, string]> = [];
+  if (draft.chiefComplaints.length > 0) clinicalPairs.push(["Chief Complaints", joinNonEmpty(draft.chiefComplaints)]);
+  if (hasText(draft.patientHistory)) clinicalPairs.push(["History", draft.patientHistory.toUpperCase()]);
+  if (draft.provisionalDiagnosisText && draft.provisionalDiagnosisText.trim().length > 0)
+    clinicalPairs.push(["Provisional Diagnosis", draft.provisionalDiagnosisText.toUpperCase()]);
+  else if (draft.diagnosis.length > 0) clinicalPairs.push(["Provisional Diagnosis", joinNonEmpty(draft.diagnosis)]);
+  if (draft.investigations.length > 0) clinicalPairs.push(["Investigations", formatInvestigationsForDocument(draft.investigations)]);
+  if (draft.surgicalProcedures.length > 0) clinicalPairs.push(["Surgical Procedure", formatSurgicalProceduresForDocument(draft.surgicalProcedures)]);
+  if (draft.treatmentGiven.length > 0) clinicalPairs.push(["Medical Management", joinNonEmpty(draft.treatmentGiven)]);
+  if (hasText(draft.doctorNotes)) clinicalPairs.push(["Other Advice", draft.doctorNotes]);
+  const clinicalRows = clinicalPairs.length
+    ? `
+      <div class="details-grid">
+        ${clinicalPairs
+          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value">: ${escapeHtml(p[1])}</div>`)
+          .join("")}
+      </div>
+    `
+    : "";
 
-  const referralRows = [
-    hasText(draft.referralReason) ? `<div class="row"><strong>Reason:</strong> ${escapeHtml(draft.referralReason)}</div>` : "",
-    hasText(draft.referredHospital)
-      ? `<div class="row"><strong>Referred Hospital:</strong> ${escapeHtml(draft.referredHospital)}</div>`
-      : "",
-    hasText(draft.referredDepartment)
-      ? `<div class="row"><strong>Department:</strong> ${escapeHtml(draft.referredDepartment)}</div>`
-      : "",
-    hasText(draft.referredDoctor)
-      ? `<div class="row"><strong>Referred Doctor:</strong> ${escapeHtml(draft.referredDoctor)}</div>`
-      : "",
-    hasText(draft.urgency) ? `<div class="row"><strong>Urgency:</strong> ${escapeHtml(draft.urgency)}</div>` : "",
-    hasText(draft.transferMode)
-      ? `<div class="row"><strong>Transfer Mode:</strong> ${escapeHtml(draft.transferMode)}</div>`
-      : "",
-    hasText(draft.referralSummary)
-      ? `<div class="row"><strong>${summaryLabel}:</strong> ${escapeHtml(draft.referralSummary)}</div>`
-      : "",
-    draft.dischargedToHome ? `<div class="row"><strong>Discharge Status:</strong> PATIENT DISCHARGED TO HOME</div>` : "",
-    hasText(draft.patientStatusDuringDischarge)
-      ? `<div class="row"><strong>Patient Status During Discharge:</strong> ${escapeHtml(draft.patientStatusDuringDischarge)}</div>`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("");
+  const referralPairs: Array<[string, string]> = [];
+  if (hasText(draft.referralReason)) referralPairs.push(["Reason", draft.referralReason]);
+  if (hasText(draft.referredHospital)) referralPairs.push(["Referred Hospital", draft.referredHospital]);
+  if (hasText(draft.referredDepartment)) referralPairs.push(["Referred Department", draft.referredDepartment]);
+  if (hasText(draft.referredDoctor)) referralPairs.push(["Referred Doctor", draft.referredDoctor]);
+  if (hasText(draft.urgency)) referralPairs.push(["Urgency", draft.urgency]);
+  if (hasText(draft.transferMode)) referralPairs.push(["Transfer Mode", draft.transferMode]);
+  if (hasText(draft.referralSummary)) referralPairs.push([summaryLabel, draft.referralSummary]);
+  const referralRows = referralPairs.length
+    ? `
+      <div class="details-grid">
+        ${referralPairs
+          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value">: ${escapeHtml(p[1])}</div>`)
+          .join("")}
+      </div>
+    `
+    : "";
 
-  const adviceRows = [
-    draft.dietAdvice.length > 0 ? `<div class="row"><strong>Diet:</strong> ${escapeHtml(joinNonEmpty(draft.dietAdvice))}</div>` : "",
-    draft.dos.length > 0 ? `<div class="row"><strong>Do's:</strong> ${escapeHtml(joinNonEmpty(draft.dos))}</div>` : "",
-    draft.donts.length > 0 ? `<div class="row"><strong>Don'ts:</strong> ${escapeHtml(joinNonEmpty(draft.donts))}</div>` : "",
-    draft.emergencyWarnings.length > 0
-      ? `<div class="row"><strong>Emergency Warnings:</strong> ${escapeHtml(joinNonEmpty(draft.emergencyWarnings))}</div>`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("");
+  const dischargePairs: Array<[string, string]> = [];
+  if (draft.dischargedToHome) dischargePairs.push(["Discharge Status", "PATIENT DISCHARGED TO HOME"]);
+  if (hasText(draft.patientStatusDuringDischarge)) dischargePairs.push(["Patient Status During Discharge", draft.patientStatusDuringDischarge.toUpperCase()]);
+  if (hasText(draft.dischargeDate)) dischargePairs.push(["Discharge Date", formatDateDMY(draft.dischargeDate)]);
+  const dischargeOnlyRows = dischargePairs.length
+    ? `
+      <div class="details-grid">
+        ${dischargePairs
+          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value">: ${escapeHtml(p[1])}</div>`)
+          .join("")}
+      </div>
+    `
+    : "";
+
+  const advicePairs: Array<[string, string]> = [];
+  if (draft.dietAdvice.length > 0) advicePairs.push(["Diet", joinNonEmpty(draft.dietAdvice)]);
+  if (draft.dos.length > 0) advicePairs.push(["Do's", joinNonEmpty(draft.dos)]);
+  if (draft.donts.length > 0) advicePairs.push(["Don'ts", joinNonEmpty(draft.donts)]);
+  if (draft.emergencyWarnings.length > 0) advicePairs.push(["Emergency Warnings", joinNonEmpty(draft.emergencyWarnings)]);
+  const adviceRows = advicePairs.length
+    ? `
+      <div class="details-grid">
+        ${advicePairs
+          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value">: ${escapeHtml(p[1])}</div>`)
+          .join("")}
+      </div>
+    `
+    : "";
 
   return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>${summaryLabel}</title>
-    <style>
-      @page { size: A4; margin: 2in 14mm 1in 14mm; }
-      body { font-family: Arial, sans-serif; color: #111; font-size: 11.5px; line-height: 1.35; }
-      h1, h2 { margin: 0; }
-      h1 { font-size: 16px; }
-      h2 { font-size: 12.5px; margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 3px; }
-      .muted { color: #444; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-top: 8px; }
-      .card { border: 1px solid #ddd; border-radius: 8px; padding: 8px; margin-top: 8px; }
-      .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-      .panel { border: 1px solid #ddd; border-radius: 8px; padding: 8px; }
-      ul { margin: 6px 0 0 18px; padding: 0; }
-      li { white-space: pre-line; margin-bottom: 5px; }
-      .row { margin-top: 5px; }
-      .footer { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    </style>
-  </head>
-  <body>
-    <h1>Bhagwati Hospital ERP · ${summaryLabel}</h1>
-    <div class="muted">Generated on ${formatDateTimeDMY(new Date())}</div>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>${summaryLabel}</title>
+      <style>
+        @page { size: A4; margin: 2in 14mm 1in 14mm; }
+        body { font-family: Arial, sans-serif; color: #111; font-size: 11.5px; line-height: 1.35; }
+        h1, h2 { margin: 0; }
+        h1 { font-size: 16px; }
+        h2 { font-size: 12.5px; margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 3px; }
+        .muted { color: #444; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-top: 8px; }
+        .details-grid { display: grid; grid-template-columns: 160px 1fr; gap: 2px 8px; align-items: start; }
+        .details-grid .label { font-weight: 700; text-transform: uppercase; font-size: 11px; }
+        .details-grid .value { font-size: 11px; }
+        .card { border: 1px solid #ddd; border-radius: 8px; padding: 8px; margin-top: 8px; }
+        .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+        .panel { border: 1px solid #ddd; border-radius: 8px; padding: 8px; }
+        ul { margin: 6px 0 0 18px; padding: 0; }
+        li { white-space: pre-line; margin-bottom: 5px; }
+        .row { margin-top: 5px; }
+        .footer { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      </style>
+    </head>
+    <body>
+      <h1>${summaryLabel}</h1>
+      <div class="muted">Generated on ${formatDateTimeDMY(new Date())}</div>
 
-    <div class="card">
-      <div class="grid">
+      <div class="card">
         ${patientDetailRows}
       </div>
-    </div>
 
-    <div class="split">
-      <div class="panel">
-        <h2>Clinical Summary</h2>
-        ${clinicalRows}
+      <div class="split" style="grid-template-columns: 1fr 1fr;">
+        <div class="panel">
+          ${clinicalRows}
 
-        ${medicationLines.length > 0 ? `<h2 style="margin-top: 10px;">Medications and Advice</h2><ul>${medicationLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : ""}
-      </div>
+          ${medicationLines.length > 0 ? `<h2 style="margin-top: 10px;">Medications and Advice</h2><ul>${medicationLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : ""}
+        </div>
 
-      <div class="panel">
-        <h2>Referral Details</h2>
-        ${referralRows}
+        <div class="panel">
+          <h2>Referral Details</h2>
+          ${draft.summaryMode === "referral_summary" ? referralRows : dischargeOnlyRows}
 
-        ${adviceRows ? `<h2 style="margin-top: 10px;">Advice</h2>${adviceRows}` : ""}
+          ${adviceRows ? `<h2 style="margin-top: 10px;">Advice</h2>${adviceRows}` : ""}
 
-        <div class="footer">
-          <div>
-            <p>Doctor Signature: ____________________</p>
-          </div>
-          <div>
-            <p>Hospital Seal: ____________________</p>
+          <div class="footer">
+            <div>
+              <p>Doctor Signature: ____________________</p>
+            </div>
+            <div>
+              <p>Hospital Seal: ____________________</p>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  </body>
-</html>`;
+    </body>
+  </html>`;
 }
 
 export const Route = createFileRoute("/_authenticated/referrals")({
+  ssr: false,
   beforeLoad: guardModuleAccess("referrals"),
   component: ReferralsPage,
 });
@@ -441,10 +422,12 @@ function ReferralsPage() {
   const [patientId, setPatientId] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [medicineLibrary, setMedicineLibrary] = useState<MedicineLibraryItem[]>([]);
+  const [patientMedicineLibrary, setPatientMedicineLibrary] = useState<MedicineLibraryItem[]>([]);
   const [newMedicineType, setNewMedicineType] = useState<NonNullable<MedicationRow["medicineType"]>>("TAB");
   const [newMedicineName, setNewMedicineName] = useState("");
   const [newMedicineDose, setNewMedicineDose] = useState("");
   const [isAddMedicineDialogOpen, setIsAddMedicineDialogOpen] = useState(false);
+  const [selectedSavedMedicineIdLocal, setSelectedSavedMedicineIdLocal] = useState("");
 
   const patients = useQuery(patientsQuery(search));
   const selectedPatient = useMemo(
@@ -453,6 +436,14 @@ function ReferralsPage() {
   );
 
   const { draft, setDraft, lastSavedAt } = useReferralDraft(patientId);
+
+  useEffect(() => {
+    if (draft.doctors.length > 0 || !draft.doctorName) return;
+    setDraft((prev) => ({
+      ...prev,
+      doctors: [{ ...DEFAULT_DOCTOR_PROFILE, name: prev.doctorName, id: createId() }],
+    }));
+  }, [draft.doctorName, draft.doctors.length, setDraft]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -492,6 +483,30 @@ function ReferralsPage() {
       setMedicineLibrary(PRESET_MEDICINE_LIBRARY);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!patientId) {
+      setPatientMedicineLibrary([]);
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`);
+      const parsed = raw ? (JSON.parse(raw) as MedicineLibraryItem[]) : [];
+      const normalized = (Array.isArray(parsed) ? parsed : [])
+        .map((item) => ({
+          id: String(item?.id ?? createId()),
+          type: MEDICINE_TYPES.includes(item?.type as any) ? (item.type as MedicationRow["medicineType"]) : "TAB",
+          name: normalizeDetail(String(item?.name ?? "").trim()),
+          suggestedDose: normalizeDetail(String(item?.suggestedDose ?? "").trim()),
+        }))
+        .filter((item) => item.name.length > 0);
+
+      setPatientMedicineLibrary(normalized);
+    } catch {
+      setPatientMedicineLibrary([]);
+    }
+  }, [patientId]);
 
   const applyTemplate = (nextTemplateId: string) => {
     setTemplateId(nextTemplateId);
@@ -542,23 +557,10 @@ function ReferralsPage() {
       const existing = medicineLibrary.find(
         (item) => item.type === newMedicineType && item.name.trim().toLowerCase() === name.toLowerCase(),
       );
-      // If duplicate exists, still try to auto-fill current empty row for faster workflow.
+      // Ensure there's at least one empty medication row available after saving to library.
       setDraft((prev) => {
-        const emptyRow = prev.medication.find((row) => !hasText(row.medicineName));
-        if (!emptyRow) return prev;
-        return {
-          ...prev,
-          medication: prev.medication.map((row) =>
-            row.id === emptyRow.id
-              ? {
-                  ...row,
-                  medicineType: newMedicineType,
-                  medicineName: name,
-                  dose: existing?.suggestedDose || row.dose,
-                }
-              : row,
-          ),
-        };
+        const hasEmpty = prev.medication.some((r) => !hasText(r.medicineName));
+        return hasEmpty ? prev : { ...prev, medication: [...prev.medication, { ...EMPTY_MEDICATION_ROW, id: createId() }] };
       });
       toast.success("Medicine already exists in saved list");
       return true;
@@ -575,24 +577,27 @@ function ReferralsPage() {
 
     if (typeof window !== "undefined") {
       window.localStorage.setItem(MEDICINE_LIBRARY_KEY, JSON.stringify(nextLibrary));
+      if (patientId) {
+        try {
+          const raw = window.localStorage.getItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`);
+          const parsed = raw ? (JSON.parse(raw) as MedicineLibraryItem[]) : [];
+          const merged = Array.from(
+            new Map(
+              [...(Array.isArray(parsed) ? parsed : []), nextItem].map((it) => [`${it.type}:${it.name}`, it]),
+            ).values(),
+          );
+          window.localStorage.setItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`, JSON.stringify(merged));
+          setPatientMedicineLibrary(merged);
+        } catch {
+          // ignore
+        }
+      }
     }
 
+    // Ensure there's at least one empty medication row available after saving to library.
     setDraft((prev) => {
-      const emptyRow = prev.medication.find((row) => !hasText(row.medicineName));
-      if (!emptyRow) return prev;
-      return {
-        ...prev,
-        medication: prev.medication.map((row) =>
-          row.id === emptyRow.id
-            ? {
-                ...row,
-                medicineType: newMedicineType,
-                medicineName: name,
-                dose: suggestedDose || row.dose,
-              }
-            : row,
-        ),
-      };
+      const hasEmpty = prev.medication.some((r) => !hasText(r.medicineName));
+      return hasEmpty ? prev : { ...prev, medication: [...prev.medication, { ...EMPTY_MEDICATION_ROW, id: createId() }] };
     });
 
     setNewMedicineName("");
@@ -613,6 +618,19 @@ function ReferralsPage() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem(MEDICINE_LIBRARY_KEY, JSON.stringify(nextLibrary));
     }
+    // remove from patient-specific library if present
+    if (patientId && typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`);
+        const parsed = raw ? (JSON.parse(raw) as MedicineLibraryItem[]) : [];
+        const nextP = (Array.isArray(parsed) ? parsed : []).filter((it) => it.id !== id && `${it.type}:${it.name}` !== id);
+        window.localStorage.setItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`, JSON.stringify(nextP));
+        setPatientMedicineLibrary(nextP);
+      } catch {
+        // ignore
+      }
+    }
+
     toast.success("Medicine removed from saved list");
   };
 
@@ -625,15 +643,9 @@ function ReferralsPage() {
         suggestedDose: item.suggestedDose,
       }));
 
-    const fromDraft = draft.medication
-      .filter((item) => item.medicineName.trim().length > 0)
-      .map((item) => ({
-        name: item.medicineName,
-        type: item.medicineType ?? "TAB",
-        suggestedDose: item.dose,
-      }));
-
-    return Array.from(new Map([...fromLibrary, ...fromDraft].map((item) => [`${item.type}:${item.name}`, item])).values());
+    const unique = Array.from(new Map(fromLibrary.map((item) => [`${item.type}:${item.name}`, item])).values());
+    unique.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    return unique;
   }, [medicineLibrary, draft.medication]);
 
   const updateMedication = (id: string, patch: Partial<MedicationRow>) => {
@@ -647,6 +659,13 @@ function ReferralsPage() {
     setMedicineLibrary(nextLibrary);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(MEDICINE_LIBRARY_KEY, JSON.stringify(nextLibrary));
+    }
+  };
+
+  const persistPatientMedicineLibrary = (nextLibrary: MedicineLibraryItem[]) => {
+    setPatientMedicineLibrary(nextLibrary);
+    if (typeof window !== "undefined" && patientId) {
+      window.localStorage.setItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`, JSON.stringify(nextLibrary));
     }
   };
 
@@ -669,6 +688,21 @@ function ReferralsPage() {
         updated[existingIndex] = { ...updated[existingIndex], suggestedDose };
         persistMedicineLibrary(updated);
       }
+      // also persist to patient library if present
+      if (patientId) {
+        try {
+          const raw = window.localStorage.getItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`);
+          const parsed = raw ? (JSON.parse(raw) as MedicineLibraryItem[]) : [];
+          const pNext = Array.from(
+            new Map(
+              [...(Array.isArray(parsed) ? parsed : []), updated[existingIndex]].map((it) => [`${it.type}:${it.name}`, it]),
+            ).values(),
+          );
+          persistPatientMedicineLibrary(pNext);
+        } catch {
+          // ignore
+        }
+      }
     } else {
       persistMedicineLibrary([
         ...medicineLibrary,
@@ -679,14 +713,33 @@ function ReferralsPage() {
           suggestedDose,
         },
       ]);
+      // Also add to patient-specific library if a patient is selected
+      if (patientId) {
+        try {
+          const raw = window.localStorage.getItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`);
+          const parsed = raw ? (JSON.parse(raw) as MedicineLibraryItem[]) : [];
+          const nextP = Array.from(
+            new Map(
+              [...(Array.isArray(parsed) ? parsed : []), { id: createId(), type: medicineType, name: medicineName, suggestedDose }].map(
+                (it) => [`${it.type}:${it.name}`, it],
+              ),
+            ).values(),
+          );
+          persistPatientMedicineLibrary(nextP);
+        } catch {
+          // ignore
+        }
+      }
     }
 
     setDraft((prev) => {
-      const hasEmptyRow = prev.medication.some((item) => !hasText(item.medicineName));
-      if (hasEmptyRow) return prev;
+      // Replace saved row with a fresh empty row so the UI resets immediately.
+      const next = prev.medication.map((item) => (item.id === row.id ? { ...EMPTY_MEDICATION_ROW, id: createId() } : item));
+      // Ensure at least one empty row exists
+      const hasEmptyRow = next.some((item) => !hasText(item.medicineName));
       return {
         ...prev,
-        medication: [...prev.medication, { ...EMPTY_MEDICATION_ROW, id: createId() }],
+        medication: hasEmptyRow ? next : [...next, { ...EMPTY_MEDICATION_ROW, id: createId() }],
       };
     });
 
@@ -815,9 +868,10 @@ function ReferralsPage() {
     writeBlockIfValue("Age/Sex", `${selectedPatient.age ?? ""} / ${selectedPatient.gender ?? ""}`.replace(/^\s*\/\s*$/, ""));
     writeBlockIfValue("Admission Date", formatDateDMY(draft.admissionDate));
     writeBlockIfValue("Discharge Date", formatDateDMY(draft.dischargeDate));
-    writeBlockIfValue("Doctor Name", doctorPrintValue(draft.doctorName));
+    writeBlockIfValue("Doctors", draft.doctors.length > 0 ? draft.doctors.map(doctorDisplayName).join("; ") : draft.doctorName);
     writeBlockIfValue("Chief Complaints", joinNonEmpty(draft.chiefComplaints));
-    writeBlockIfValue("History", draft.patientHistory);
+    writeBlockIfValue("History", draft.patientHistory.toUpperCase());
+    writeBlockIfValue("Provisional Diagnosis", String(draft.provisionalDiagnosisText ?? "").toUpperCase());
     writeBlockIfValue("Diagnosis", joinNonEmpty(draft.diagnosis));
     if (draft.investigations.length > 0) writeBlock("Investigations", formatInvestigationsForDocument(draft.investigations));
     if (draft.surgicalProcedures.length > 0) writeBlock("Surgical Procedure", formatSurgicalProceduresForDocument(draft.surgicalProcedures));
@@ -845,7 +899,7 @@ function ReferralsPage() {
     writeBlockIfValue("Urgency", draft.urgency);
     writeBlockIfValue("Transfer Mode", draft.transferMode);
     if (draft.dischargedToHome) writeBlock("Discharge Status", "PATIENT DISCHARGED TO HOME");
-    writeBlockIfValue("Patient Status During Discharge", draft.patientStatusDuringDischarge);
+    writeBlockIfValue("Patient Status During Discharge", draft.patientStatusDuringDischarge.toUpperCase());
     writeBlockIfValue("Diet Advice", joinNonEmpty(draft.dietAdvice));
     writeBlockIfValue("Do's", joinNonEmpty(draft.dos));
     writeBlockIfValue("Don'ts", joinNonEmpty(draft.donts));
@@ -863,7 +917,7 @@ function ReferralsPage() {
         description="Complete discharge plus referral summary with searchable master libraries, reusable templates and autosave drafts."
       />
 
-      <section className="neo mb-5 grid gap-3 p-4 lg:grid-cols-3">
+      <section className="neo mb-5 grid gap-3 p-4 lg:grid-cols-2">
         <div className="space-y-2 lg:col-span-2">
           <Label htmlFor="patient-search">Search patient</Label>
           <div className="neo-inset flex items-center gap-2 rounded-xl px-3">
@@ -881,7 +935,7 @@ function ReferralsPage() {
               <SelectValue placeholder="Select patient to start draft" />
             </SelectTrigger>
             <SelectContent>
-              {(patients.data ?? []).map((p) => (
+              {(patients.data ?? []).slice().sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.full_name} · {p.uhid} · {p.phone}
                 </SelectItem>
@@ -897,7 +951,7 @@ function ReferralsPage() {
               <SelectValue placeholder="Apply one-click template" />
             </SelectTrigger>
             <SelectContent>
-              {REFERRAL_TEMPLATES.map((template) => (
+              {[...REFERRAL_TEMPLATES].slice().sort((a, b) => String(a.label).localeCompare(String(b.label))).map((template) => (
                 <SelectItem key={template.id} value={template.id}>
                   {template.label}
                 </SelectItem>
@@ -905,12 +959,12 @@ function ReferralsPage() {
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            Auto-saved every 4 seconds{lastSavedAt ? ` · last save ${new Date(lastSavedAt).toLocaleTimeString()}` : ""}
+            Auto-saved every 4 seconds{lastSavedAt ? ` · last save ${formatDateTimeDMY(lastSavedAt)}` : ""}
           </p>
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
+      <section className="grid gap-4 xl:grid-cols-2">
         <SectionCard
           title="Discharge Summary"
           description="Clinical narrative and ready-made master pickers"
@@ -941,7 +995,7 @@ function ReferralsPage() {
             gender={selectedPatient?.gender || "-"}
             admissionDate={draft.admissionDate}
             dischargeDate={draft.dischargeDate}
-            doctorName={draft.doctorName}
+            doctors={draft.doctors}
           />
 
           <div className="grid gap-2 sm:grid-cols-2">
@@ -960,29 +1014,27 @@ function ReferralsPage() {
                 id="dischargeDate"
                 type="date"
                 value={draft.dischargeDate}
-                onChange={(e) => setDraft((prev) => ({ ...prev, dischargeDate: e.target.value }))}
+                onChange={(e) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    dischargeDate: e.target.value,
+                    dischargedToHome: e.target.value ? true : prev.dischargedToHome,
+                  }))
+                }
               />
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>Doctor Name</Label>
-            <Select
-              value={draft.doctorName}
-              onValueChange={(value) => setDraft((prev) => ({ ...prev, doctorName: value }))}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="SELECT DOCTOR" />
-              </SelectTrigger>
-              <SelectContent>
-                {DOCTOR_OPTIONS.map((doctor) => (
-                  <SelectItem key={doctor} value={doctor}>
-                    {doctor}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <DoctorPicker
+            value={draft.doctors}
+            onChange={(doctors) =>
+              setDraft((prev) => ({
+                ...prev,
+                doctors,
+                doctorName: doctors[0]?.name ? doctorDisplayName(doctors[0]) : "",
+              }))
+            }
+          />
 
           <SmartMultiPicker
             title="Chief Complaints"
@@ -1008,13 +1060,14 @@ function ReferralsPage() {
                   <Textarea
                     rows={8}
                     value={draft.patientHistory}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, patientHistory: normalizeDetail(e.target.value) }))}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, patientHistory: toUpper(e.target.value) }))}
+                    className="uppercase"
                     placeholder="PATIENT HISTORY"
                   />
                 </DialogContent>
               </Dialog>
             </div>
-            <p className="text-xs text-muted-foreground">{draft.patientHistory || "No history added yet."}</p>
+            <p className="text-xs uppercase text-muted-foreground">{draft.patientHistory || "No history added yet."}</p>
           </div>
 
           <SmartMultiPicker
@@ -1025,6 +1078,51 @@ function ReferralsPage() {
             persistKey={DIAGNOSIS_USER_LIBRARY_KEY}
             addLabel="Add Diagnosis"
           />
+
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium">Provisional Diagnosis (Long Note)</p>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button type="button" variant="secondary" size="sm">Open Provisional Diagnosis Dialog</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Provisional Diagnosis</DialogTitle>
+                  <DialogDescription>Enter long provisional diagnosis notes.</DialogDescription>
+                </DialogHeader>
+                <Textarea
+                  rows={8}
+                  value={draft.provisionalDiagnosisText || ""}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, provisionalDiagnosisText: toUpper(e.target.value) }))}
+                  className="uppercase"
+                  placeholder="PROVISIONAL DIAGNOSIS"
+                />
+              </DialogContent>
+            </Dialog>
+          </div>
+          <p className="text-xs uppercase text-muted-foreground">{draft.provisionalDiagnosisText || "No provisional diagnosis added yet."}</p>
+
+          <div className="flex items-center justify-end">
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button type="button" variant="secondary" size="sm">Open Provisional Dialog</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Provisional Diagnosis</DialogTitle>
+                  <DialogDescription>Select or add provisional diagnoses.</DialogDescription>
+                </DialogHeader>
+                <SmartMultiPicker
+                  title="Provisional Diagnosis"
+                  allItems={DIAGNOSIS_LIBRARY}
+                  value={draft.diagnosis}
+                  onChange={(next) => setDraft((prev) => ({ ...prev, diagnosis: next }))}
+                  persistKey={DIAGNOSIS_USER_LIBRARY_KEY}
+                  addLabel="Add Diagnosis"
+                />
+              </DialogContent>
+            </Dialog>
+          </div>
 
           <InvestigationEditor
             value={draft.investigations}
@@ -1078,11 +1176,11 @@ function ReferralsPage() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {MEDICINE_TYPES.map((type) => (
-                            <SelectItem key={type} value={type}>
-                              {type}
-                            </SelectItem>
-                          ))}
+                                  {[...MEDICINE_TYPES].slice().sort((a, b) => String(a).localeCompare(String(b))).map((type) => (
+                                    <SelectItem key={type} value={type}>
+                                      {type}
+                                    </SelectItem>
+                                  ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1145,6 +1243,55 @@ function ReferralsPage() {
                   ))
                 )}
               </div>
+
+              
+            </div>
+
+            {/* Saved medicines dropdown moved below medicine listing and above Other Advice */}
+
+            <div className="mb-2">
+              <Label>Saved medicines (verify)</Label>
+              <Select
+                value={selectedSavedMedicineIdLocal}
+                onValueChange={(value) => setSelectedSavedMedicineIdLocal(value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select saved medicine to verify" />
+                </SelectTrigger>
+                <SelectContent>
+                  {((patientMedicineLibrary.length > 0 ? patientMedicineLibrary : medicineLibrary) || [])
+                    .slice()
+                    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                    .map((item) => {
+                      const prescribed = draft.medication.some(
+                        (m) => hasText(m.medicineName) && m.medicineName.trim().toLowerCase() === item.name.trim().toLowerCase() && (m.medicineType || "TAB") === item.type,
+                      );
+                      return (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.type} - {item.name}{hasText(item.suggestedDose || "") ? ` (${item.suggestedDose})` : ""}{prescribed ? ` · PRESCRIBED` : ""}
+                        </SelectItem>
+                      );
+                    })}
+                </SelectContent>
+              </Select>
+
+              {selectedSavedMedicineIdLocal ? (
+                <p className="text-xs text-muted-foreground mt-2">
+                  {(() => {
+                    const sel = (patientMedicineLibrary.length > 0 ? patientMedicineLibrary : medicineLibrary).find((m) => m.id === selectedSavedMedicineIdLocal);
+                    if (!sel) return "Selected medicine not found.";
+                    const presRows = draft.medication
+                      .filter(
+                        (m) => hasText(m.medicineName) && m.medicineName.trim().toLowerCase() === sel.name.trim().toLowerCase() && (m.medicineType || "TAB") === sel.type,
+                      )
+                      .map((m) => `${m.medicineType ?? ""} ${m.medicineName}${m.dose ? ` (${m.dose})` : ""}`);
+                    if (presRows.length === 0) return `${sel.type} - ${sel.name} is NOT prescribed in this draft.`;
+                    return `${sel.type} - ${sel.name} is prescribed in: ${presRows.join("; ")}`;
+                  })()}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground mt-2">Choose a saved medicine to verify whether it's prescribed.</p>
+              )}
             </div>
 
             {draft.medication.map((row) => (
@@ -1191,13 +1338,15 @@ function ReferralsPage() {
                     </SelectContent>
                   </Select>
                   <Select
-                    value={row.medicineName || undefined}
+                    value={hasText(row.medicineName) ? `${row.medicineType ?? "TAB"}:${row.medicineName}` : undefined}
                     onValueChange={(value) => {
-                      const selected = medicineOptions.find(
-                        (item) => item.type === (row.medicineType ?? "TAB") && item.name === value,
-                      );
+                      if (!value) return;
+                      const [type, ...nameParts] = value.split(":");
+                      const name = nameParts.join(":") || "";
+                      const selected = medicineOptions.find((item) => `${item.type}:${item.name}` === value);
                       updateMedication(row.id, {
-                        medicineName: value,
+                        medicineType: (type as MedicationRow["medicineType"]) || row.medicineType,
+                        medicineName: name,
                         dose: selected?.suggestedDose || row.dose,
                       });
                     }}
@@ -1206,19 +1355,19 @@ function ReferralsPage() {
                       <SelectValue placeholder="Select Medicine" />
                     </SelectTrigger>
                     <SelectContent>
-                      {medicineOptions
-                        .filter((item) => item.type === (row.medicineType ?? "TAB"))
-                        .map((item) => (
-                          <SelectItem key={`${item.type}-${item.name}`} value={item.name}>
-                            {item.name}{item.suggestedDose ? ` (${item.suggestedDose})` : ""}
-                          </SelectItem>
-                        ))}
+                      {medicineOptions.map((item) => (
+                        <SelectItem key={`${item.type}-${item.name}`} value={`${item.type}:${item.name}`}>
+                          {item.type} - {item.name}{item.suggestedDose ? ` (${item.suggestedDose})` : ""}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <Input
-                    placeholder="Drug quantity"
-                    value={row.strength}
-                    onChange={(e) => updateMedication(row.id, { strength: toUpper(e.target.value) })}
+                    type="number"
+                    min={1}
+                    placeholder="Duration days"
+                    value={row.durationDays}
+                    onChange={(e) => updateMedication(row.id, { durationDays: Number(e.target.value) || 1 })}
                   />
                   <Input
                     placeholder="Dose"
@@ -1226,11 +1375,9 @@ function ReferralsPage() {
                     onChange={(e) => updateMedication(row.id, { dose: toUpper(e.target.value) })}
                   />
                   <Input
-                    type="number"
-                    min={1}
-                    placeholder="Duration days"
-                    value={row.durationDays}
-                    onChange={(e) => updateMedication(row.id, { durationDays: Number(e.target.value) || 1 })}
+                    placeholder="Drug quantity"
+                    value={row.strength}
+                    onChange={(e) => updateMedication(row.id, { strength: toUpper(e.target.value) })}
                   />
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
@@ -1245,9 +1392,19 @@ function ReferralsPage() {
                     onCheckedChange={(checked) => updateMedication(row.id, { afternoon: checked })}
                   />
                   <Tick
+                    label="TDS"
+                    checked={Boolean(row.tds)}
+                    onCheckedChange={(checked) => updateMedication(row.id, { tds: checked })}
+                  />
+                  <Tick
                     label="NIGHT"
                     checked={row.night}
                     onCheckedChange={(checked) => updateMedication(row.id, { night: checked })}
+                  />
+                  <Tick
+                    label="HS"
+                    checked={Boolean(row.hs)}
+                    onCheckedChange={(checked) => updateMedication(row.id, { hs: checked })}
                   />
                   <Select
                     value={row.foodTiming}
@@ -1285,6 +1442,65 @@ function ReferralsPage() {
           </div>
 
           <div className="space-y-2">
+            <Label>Saved medicines (patient)</Label>
+            <Select
+              value={""}
+              onValueChange={(value) => {
+                if (!value) return;
+                const selected = (patientMedicineLibrary.length > 0 ? patientMedicineLibrary : medicineLibrary).find((m) => m.id === value);
+                if (!selected) return;
+                // apply to first empty medication row or append
+                setDraft((prev) => {
+                  const emptyIndex = prev.medication.findIndex((r) => !hasText(r.medicineName));
+                  if (emptyIndex >= 0) {
+                    const next = prev.medication.map((item, i) =>
+                      i === emptyIndex
+                        ? {
+                            ...item,
+                            medicineName: selected.name,
+                            medicineType: selected.type,
+                            dose: selected.suggestedDose ?? item.dose,
+                          }
+                        : item,
+                    );
+                    return { ...prev, medication: next };
+                  }
+                  return {
+                    ...prev,
+                    medication: [
+                      ...prev.medication,
+                      {
+                        ...EMPTY_MEDICATION_ROW,
+                        id: createId(),
+                        medicineName: selected.name,
+                        medicineType: selected.type,
+                        dose: selected.suggestedDose ?? "",
+                      },
+                    ],
+                  };
+                });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Apply saved medicine to draft" />
+              </SelectTrigger>
+              <SelectContent>
+                {(patientMedicineLibrary.length === 0 && medicineLibrary.length === 0) ? (
+                  <SelectItem value="">No saved medicines</SelectItem>
+                ) : (
+                  (patientMedicineLibrary.length > 0 ? patientMedicineLibrary : medicineLibrary)
+                    .slice()
+                    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                    .map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.type} - {item.name}
+                        {hasText(item.suggestedDose || "") ? ` (${item.suggestedDose})` : ""}
+                      </SelectItem>
+                    ))
+                )}
+              </SelectContent>
+            </Select>
+
             <Label htmlFor="doctorNotes">Other Advice</Label>
             <Textarea
               id="doctorNotes"
@@ -1331,15 +1547,14 @@ function ReferralsPage() {
               </DialogContent>
             </Dialog>
 
-            <div className="space-y-2">
+            <div className="space-y-2 rounded-2xl border border-border/70 p-3">
               <Label htmlFor="patientStatusDuringDischarge">Patient Status During Discharge</Label>
               <Textarea
                 id="patientStatusDuringDischarge"
-                rows={3}
+                rows={8}
                 value={draft.patientStatusDuringDischarge}
-                onChange={(e) =>
-                  setDraft((prev) => ({ ...prev, patientStatusDuringDischarge: normalizeDetail(e.target.value) }))
-                }
+                onChange={(e) => setDraft((prev) => ({ ...prev, patientStatusDuringDischarge: toUpper(e.target.value) }))}
+                className="uppercase"
                 placeholder="PATIENT STATUS DURING DISCHARGE"
               />
             </div>
@@ -2387,14 +2602,14 @@ function PatientInfoBanner({
   gender,
   admissionDate,
   dischargeDate,
-  doctorName,
+  doctors,
 }: {
   name: string;
   age: string;
   gender: string;
   admissionDate: string;
   dischargeDate: string;
-  doctorName: string;
+  doctors: DoctorProfile[];
 }) {
   return (
     <div className="neo-inset rounded-2xl p-3 text-xs text-muted-foreground">
@@ -2407,7 +2622,110 @@ function PatientInfoBanner({
         <p>ADMISSION DATE: <span className="font-medium text-foreground">{formatDateDMY(admissionDate) || "-"}</span></p>
         <p>DISCHARGE DATE: <span className="font-medium text-foreground">{formatDateDMY(dischargeDate) || "-"}</span></p>
       </div>
-      <p className="mt-1">DOCTOR NAME: <span className="font-medium text-foreground">{doctorName || "-"}</span></p>
+      <p className="mt-1">DOCTORS: <span className="font-medium text-foreground">{doctors.length > 0 ? doctors.map(doctorDisplayName).join("; ") : "-"}</span></p>
+    </div>
+  );
+}
+
+function DoctorPicker({
+  value,
+  onChange,
+}: {
+  value: DoctorProfile[];
+  onChange: (doctors: DoctorProfile[]) => void;
+}) {
+  const [directory, setDirectory] = useState<DoctorProfile[]>([DEFAULT_DOCTOR_PROFILE]);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [degree, setDegree] = useState("");
+  const [details, setDetails] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(DOCTOR_LIBRARY_KEY) || "null") as DoctorProfile[] | null;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        setDirectory(parsed.filter((doctor) => doctor?.id && doctor?.name));
+      }
+    } catch {
+      // Ignore malformed local directory data.
+    }
+  }, []);
+
+  const saveDirectory = (next: DoctorProfile[]) => {
+    setDirectory(next);
+    window.localStorage.setItem(DOCTOR_LIBRARY_KEY, JSON.stringify(next));
+  };
+
+  const addDoctor = () => {
+    const nextDoctor: DoctorProfile = {
+      id: createId(),
+      name: toUpper(name.trim()),
+      degree: toUpper(degree.trim()),
+      details: toUpper(details.trim()),
+    };
+    if (!nextDoctor.name) {
+      toast.error("Enter the doctor's name");
+      return;
+    }
+    const nextDirectory = [nextDoctor, ...directory.filter((doctor) => doctorDisplayName(doctor) !== doctorDisplayName(nextDoctor))];
+    saveDirectory(nextDirectory);
+    onChange([...value, nextDoctor]);
+    setName("");
+    setDegree("");
+    setDetails("");
+    setIsDialogOpen(false);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label>Doctors / Surgeons</Label>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogTrigger asChild>
+            <Button type="button" variant="secondary" size="sm">
+              <Plus className="size-4" /> Add doctor
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add Doctor</DialogTitle>
+              <DialogDescription>Save the doctor in the directory and add them to this patient record.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1"><Label>Doctor name</Label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="DR FULL NAME" /></div>
+              <div className="space-y-1"><Label>Degree</Label><Input value={degree} onChange={(event) => setDegree(event.target.value)} placeholder="MBBS, MS, MD" /></div>
+              <div className="space-y-1"><Label>Role / speciality</Label><Input value={details} onChange={(event) => setDetails(event.target.value)} placeholder="CONSULTANT SURGEON" /></div>
+            </div>
+            <DialogFooter>
+              <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
+              <Button type="button" onClick={addDoctor}>Save and add</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+      <Select
+        value=""
+        onValueChange={(doctorId) => {
+          const doctor = directory.find((item) => item.id === doctorId);
+          if (doctor && !value.some((item) => item.id === doctor.id)) onChange([...value, doctor]);
+        }}
+      >
+        <SelectTrigger><SelectValue placeholder="SELECT A SAVED DOCTOR / SURGEON" /></SelectTrigger>
+        <SelectContent>
+          {directory.slice().sort((a, b) => doctorDisplayName(a).localeCompare(doctorDisplayName(b))).map((doctor) => (
+            <SelectItem key={doctor.id} value={doctor.id}>{doctorDisplayName(doctor)}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="space-y-1">
+        {value.map((doctor, index) => (
+          <div key={doctor.id} className="flex items-center justify-between gap-2 rounded-lg border border-border/70 px-3 py-2 text-sm">
+            <span><span className="font-medium">{index === 0 ? "Treating: " : "Co-surgeon: "}</span>{doctorDisplayName(doctor)}</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => onChange(value.filter((item) => item.id !== doctor.id))}>Remove</Button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

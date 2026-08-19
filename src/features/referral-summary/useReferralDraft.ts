@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { InvestigationRecord, MedicationRow, ReferralDraft } from "@/features/referral-summary/types";
+import type { DoctorProfile, InvestigationRecord, MedicationRow, ReferralDraft } from "@/features/referral-summary/types";
 
 function createId() {
-  if (typeof globalThis !== "undefined" && globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+  // Avoid non-deterministic ID generation during SSR to prevent hydration mismatches.
+  if (typeof window === "undefined") return "";
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
     return globalThis.crypto.randomUUID();
   }
   return `row-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export const EMPTY_MEDICATION_ROW: MedicationRow = {
-  id: createId(),
+  id: "empty-medication-row",
   medicineName: "",
   medicineType: "TAB",
   strength: "",
@@ -18,6 +20,8 @@ export const EMPTY_MEDICATION_ROW: MedicationRow = {
   morning: true,
   afternoon: false,
   night: true,
+  tds: false,
+  hs: false,
   foodTiming: "after_meal",
   durationDays: 5,
   specialInstruction: "",
@@ -30,6 +34,7 @@ export const createEmptyDraft = (): ReferralDraft => ({
   admissionDate: "",
   dischargeDate: "",
   doctorName: "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO, CONSULTANT GYNECOLOGIST & OBSTETRICIAN",
+  doctors: [],
   chiefComplaints: [],
   patientHistory: "",
   diagnosis: [],
@@ -50,10 +55,12 @@ export const createEmptyDraft = (): ReferralDraft => ({
   referralSummary: "",
   dischargedToHome: false,
   patientStatusDuringDischarge: "",
+  provisionalDiagnosisText: "",
   followUpDays: 7,
   customFollowUpDays: 0,
   medication: [{ ...EMPTY_MEDICATION_ROW }],
-  updatedAt: new Date().toISOString(),
+  // Leave empty so server/client render the same initial value; client will populate when saving.
+  updatedAt: "",
 });
 
 const STORAGE_NAMESPACE = "bhagwati:referral-draft";
@@ -99,9 +106,17 @@ function readDraftFromStorage(key: string): ReferralDraft | null {
       admissionDate: parsed.admissionDate ?? "",
       dischargeDate: parsed.dischargeDate ?? "",
       doctorName: parsed.doctorName ?? "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO, CONSULTANT GYNECOLOGIST & OBSTETRICIAN",
-      patientHistory: parsed.patientHistory ?? "",
+      doctors: Array.isArray(parsed.doctors)
+        ? parsed.doctors.filter((doctor): doctor is DoctorProfile => Boolean(doctor?.id && doctor?.name)).map((doctor) => ({
+            id: doctor.id,
+            name: doctor.name,
+            degree: doctor.degree ?? "",
+            details: doctor.details ?? "",
+          }))
+        : [],
+      patientHistory: String(parsed.patientHistory ?? "").toUpperCase(),
       dischargedToHome: Boolean(parsed.dischargedToHome),
-      patientStatusDuringDischarge: parsed.patientStatusDuringDischarge ?? "",
+      patientStatusDuringDischarge: String(parsed.patientStatusDuringDischarge ?? "").toUpperCase(),
       investigations: normalizedInvestigations,
       surgicalProcedures: Array.isArray(parsed.surgicalProcedures)
         ? parsed.surgicalProcedures.map((entry) => ({
@@ -121,8 +136,11 @@ function readDraftFromStorage(key: string): ReferralDraft | null {
                   : item.foodTiming === "after_food"
                     ? "after_meal"
                     : (item.foodTiming ?? "after_meal"),
+              tds: Boolean(item.tds),
+              hs: Boolean(item.hs),
             }))
           : [{ ...EMPTY_MEDICATION_ROW, id: createId() }],
+      provisionalDiagnosisText: String(parsed.provisionalDiagnosisText ?? "").toUpperCase(),
     };
     return normalized;
   } catch {

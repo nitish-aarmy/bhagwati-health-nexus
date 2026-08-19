@@ -12,6 +12,8 @@ export type MedicationRow = {
   morning: boolean;
   afternoon: boolean;
   night: boolean;
+  tds?: boolean;
+  hs?: boolean;
   foodTiming:
     | "empty_stomach"
     | "after_meal"
@@ -47,6 +49,13 @@ export type SurgicalProcedureEntry = {
   finding: string;
 };
 
+export type DoctorProfile = {
+  id: string;
+  name: string;
+  degree: string;
+  details: string;
+};
+
 export type ReferralDraft = {
   patientId: string;
   templateId: string;
@@ -54,6 +63,7 @@ export type ReferralDraft = {
   admissionDate: string;
   dischargeDate: string;
   doctorName: string;
+  doctors: DoctorProfile[];
   chiefComplaints: string[];
   patientHistory: string;
   diagnosis: string[];
@@ -74,6 +84,7 @@ export type ReferralDraft = {
   referralSummary: string;
   dischargedToHome: boolean;
   patientStatusDuringDischarge: string;
+  provisionalDiagnosisText?: string;
   followUpDays: FollowUpPreset | 0;
   customFollowUpDays: number;
   medication: MedicationRow[];
