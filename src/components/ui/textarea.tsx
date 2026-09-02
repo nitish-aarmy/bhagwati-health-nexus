@@ -13,6 +13,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, React.ComponentProps<"tex
         )}
         ref={ref}
         onChange={(event) => {
+          event.currentTarget.value = event.currentTarget.value.toUpperCase();
           onChange?.(event);
         }}
         {...props}

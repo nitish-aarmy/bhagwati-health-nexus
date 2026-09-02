@@ -14,11 +14,11 @@ export type MedicationRow = {
   night: boolean;
   tds?: boolean;
   hs?: boolean;
+  sos?: boolean;
   foodTiming:
+    | "none"
     | "empty_stomach"
     | "after_meal"
-    | "hs"
-    | "sos"
     | "before_breakfast"
     | "after_breakfast"
     | "after_lunch"
@@ -66,6 +66,7 @@ export type ReferralDraft = {
   doctors: DoctorProfile[];
   chiefComplaints: string[];
   patientHistory: string;
+  allergies: string;
   diagnosis: string[];
   treatmentGiven: string[];
   investigations: InvestigationRecord[];
@@ -83,12 +84,24 @@ export type ReferralDraft = {
   transferMode: string;
   referralSummary: string;
   dischargedToHome: boolean;
-  patientStatusDuringDischarge: string;
+  dischargedWithoutConsent: boolean;
+  patientConditionDuringDischarge: string;
   provisionalDiagnosisText?: string;
   followUpDays: FollowUpPreset | 0;
   customFollowUpDays: number;
   medication: MedicationRow[];
+  savedMedicationEntries: MedicationRow[];
   updatedAt: string;
+};
+
+export type DischargeSummaryQueueItem = {
+  id: string;
+  patientId: string;
+  patientName: string;
+  summaryMode: SummaryMode;
+  preparedAt: string;
+  status: "draft" | "saved";
+  summaryId: string;
 };
 
 export type SmartTemplate = {

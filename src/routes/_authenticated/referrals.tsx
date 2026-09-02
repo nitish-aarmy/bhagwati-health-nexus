@@ -69,15 +69,17 @@ const DOS_USER_LIBRARY_KEY = "bhagwati:user:dos";
 const DONTS_USER_LIBRARY_KEY = "bhagwati:user:donots";
 const EMERGENCY_WARNING_USER_LIBRARY_KEY = "bhagwati:user:emergency-warnings";
 const DOCTOR_LIBRARY_KEY = "bhagwati:user:doctors";
+const DISCHARGE_SUMMARY_QUEUE_KEY = "bhagwati:discharge-summary-queue";
+const SUMMARY_SEQUENCE_KEY = "bhagwati:summary-sequence";
 
 const PRESET_MEDICINE_LIBRARY: MedicineLibraryItem[] = [];
 const MEDICINE_TYPES: MedicationRow["medicineType"][] = ["TAB", "CAP", "SYP", "INJ", "IV", "ML"];
 
 const DEFAULT_DOCTOR_PROFILE: DoctorProfile = {
   id: "default-archana-tiwari-pandey",
-  name: "DR ARCHANA TIWARI PANDEY",
-  degree: "MBBS (HONS) DGO",
-  details: "CONSULTANT GYNECOLOGIST & OBSTETRICIAN",
+  name: "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO",
+  degree: "",
+  details: "",
 };
 
 const ALL_REPORTS_ATTACHED_TEST_ID = "all_reports_attached";
@@ -103,7 +105,7 @@ function hasText(value?: string) {
 }
 
 function doctorDisplayName(doctor: DoctorProfile) {
-  return [doctor.name, doctor.degree, doctor.details].filter(hasText).join(", ");
+  return [doctor.name, doctor.degree].filter(hasText).join(", ");
 }
 
 function joinNonEmpty(items: string[]) {
@@ -120,7 +122,23 @@ function escapeHtml(unsafe: string) {
 }
 
 function doctorPrintHtml(name: string) {
-  return escapeHtml(name || "");
+  return escapeHtml(name || "").replace(/,\s*/g, "<br>");
+}
+
+function doctorPrintRows(doctors: DoctorProfile[], fallbackDoctorName: string) {
+  const printableDoctors = doctors.length > 0 ? doctors : [{ id: "fallback", name: fallbackDoctorName, degree: "", details: "" }];
+  return printableDoctors
+    .map((doctor, index) => {
+      const nameParts = String(doctor.name || "-").split(",");
+      const name = escapeHtml(nameParts.shift()?.trim() || "-");
+      const doctorDetails = [...nameParts, doctor.degree]
+        .map((detail) => detail.trim())
+        .filter(Boolean)
+        .map((detail) => `<div class="doctor-degree">${escapeHtml(detail)}</div>`)
+        .join("");
+      return `<div class="label">${index === 0 ? "Treating Doctor" : ""}</div><div class="value doctor-value"><span class="doctor-colon">:</span><div class="doctor-details"><div>${name}</div>${doctorDetails}</div></div>`;
+    })
+    .join("");
 }
 
 function doctorPrintValue(name: string) {
@@ -130,7 +148,29 @@ function doctorPrintValue(name: string) {
 function toInvestigationId(prefix: string, name: string) {
   return `${prefix}_${String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
 }
+
+function financialYear() {
+  const now = new Date();
+  const startYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${String(startYear).slice(-2)}-${String(startYear + 1).slice(-2)}`;
+}
+
+function nextSummaryId(summaryMode: SummaryMode) {
+  const prefix = summaryMode === "referral_summary" ? "REF" : "DIS";
+  const year = financialYear();
+  const key = `${prefix}-${year}`;
+  let sequence = 0;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(SUMMARY_SEQUENCE_KEY) || "{}") as Record<string, number>;
+    sequence = Number(stored[key] || 0) + 1;
+    window.localStorage.setItem(SUMMARY_SEQUENCE_KEY, JSON.stringify({ ...stored, [key]: sequence }));
+  } catch {
+    sequence = Date.now() % 100000;
+  }
+  return `BH/${prefix}/${year}${String(sequence).padStart(3, "0")}`;
+}
 import type {
+  DischargeSummaryQueueItem,
   DoctorProfile,
   FollowUpPreset,
   InvestigationRecord,
@@ -155,12 +195,11 @@ function foodTimingPrintLabel(value?: string) {
   const labels: Record<string, string> = {
     empty_stomach: "EMPTY STOMACH",
     after_meal: "AFTER MEAL",
-    hs: "HS",
-    sos: "SOS",
     before_breakfast: "BEFORE BREAKFAST",
     after_breakfast: "AFTER BREAKFAST",
     after_lunch: "AFTER LUNCH",
     after_lunch_2: "AFTER LUNCH",
+    none: "",
   };
   return labels[value] ?? "";
 }
@@ -174,6 +213,7 @@ function medicationSchedulePrintBlock(row: MedicationRow) {
     row.tds ? "TDS" : "",
     row.night ? "NIGHT" : "",
     row.hs ? "HS" : "",
+    row.sos ? "SOS" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -184,10 +224,6 @@ function medicationSchedulePrintBlock(row: MedicationRow) {
 }
 
 function formatInvestigationRecord(record: InvestigationRecord) {
-  if (record.reportAttached) {
-    return `${record.testName} (Report attached)`;
-  }
-
   const parameterBits = record.parameters
     .filter((item) => item.result.trim().length > 0)
     .map((item) => `${item.name}: ${item.result}${item.unit ? ` ${item.unit}` : ""}`);
@@ -202,20 +238,7 @@ function formatInvestigationsForDocument(investigations: InvestigationRecord[]) 
     return ALL_REPORTS_ATTACHED_LABEL.replace(/ALL\s*/i, "");
   }
   const withInlineReportTag = investigations.map(formatInvestigationRecord).join(", ");
-  const anyReportAttached = investigations.some((investigation) => investigation.reportAttached);
-  if (!anyReportAttached) return withInlineReportTag;
-
-  // Keep report-attached marker only once in printed output.
-  const cleaned = investigations
-    .map((record) => {
-      const parameterBits = record.parameters
-        .filter((item) => item.result.trim().length > 0)
-        .map((item) => `${item.name}: ${item.result}${item.unit ? ` ${item.unit}` : ""}`);
-      if (parameterBits.length === 0) return record.testName;
-      return `${record.testName} (${parameterBits.join(", ")})`;
-    })
-    .join(", ");
-  return `${cleaned} (Report attached)`;
+  return withInlineReportTag;
 }
 
 function formatSurgicalProceduresForDocument(surgicalProcedures: SurgicalProcedureEntry[]) {
@@ -227,11 +250,15 @@ function formatSurgicalProceduresForDocument(surgicalProcedures: SurgicalProcedu
 
 function createReferralHtml({
   patientName,
+  patientRegistrationId,
   ageGender,
+  summaryId,
   draft,
 }: {
   patientName: string;
+  patientRegistrationId: string;
   ageGender: string;
+  summaryId: string;
   draft: {
     admissionDate: string;
     dischargeDate: string;
@@ -257,44 +284,65 @@ function createReferralHtml({
     referralSummary: string;
     summaryMode: SummaryMode;
     dischargedToHome: boolean;
-    patientStatusDuringDischarge: string;
+    dischargedWithoutConsent: boolean;
+    patientConditionDuringDischarge: string;
     provisionalDiagnosisText?: string;
     medication: MedicationRow[];
+    savedMedicationEntries: MedicationRow[];
   };
 }) {
-  const medicationLines = draft.medication.filter((m) => m.medicineName.trim().length > 0).map(medicationSchedulePrintBlock);
+  const medicationLines = [...draft.savedMedicationEntries, ...draft.medication]
+    .filter((m) => m.medicineName.trim().length > 0)
+    .map(medicationSchedulePrintBlock);
 
   const summaryLabel = draft.summaryMode === "referral_summary" ? "REFERRAL SUMMARY" : "DISCHARGE SUMMARY";
+  const summaryIdLabel = draft.summaryMode === "referral_summary" ? "Referral ID" : "Discharge ID";
+  const treatingDoctors = draft.doctors.length > 0 ? draft.doctors.map(doctorDisplayName) : [draft.doctorName || "-"];
 
-  // Render a stable two-column details block with aligned label: value pairs
+  // Keep primary patient identifiers on the left and admission details on the right.
   const patientDetailRows = `
-    <div class="details-grid">
-      <div class="label">Patient Name</div><div class="value">: ${escapeHtml(patientName || "-")}</div>
-      <div class="label">Age/Sex</div><div class="value">: ${escapeHtml(ageGender || "-")}</div>
-      <div class="label">Admission Date</div><div class="value">: ${escapeHtml(hasText(draft.admissionDate) ? formatDateDMY(draft.admissionDate) : "-")}</div>
-      <div class="label">Discharge Date</div><div class="value">: ${escapeHtml(hasText(draft.dischargeDate) ? formatDateDMY(draft.dischargeDate) : "-")}</div>
-      <div class="label">TREATING DOCTORS</div><div class="value">: ${doctorPrintHtml(draft.doctors.length > 0 ? draft.doctors.map(doctorDisplayName).join("; ") : draft.doctorName || "-")}</div>
+    <div class="patient-details-columns">
+      <div class="details-grid">
+        <div class="label">${summaryIdLabel}</div><div class="value">: ${escapeHtml(summaryId)}</div>
+        <div class="label">Patient Registration ID</div><div class="value">: ${escapeHtml(patientRegistrationId)}</div>
+        <div class="label">Patient Name</div><div class="value">: ${escapeHtml(patientName || "-")}</div>
+        <div class="label">Age/Sex</div><div class="value">: ${escapeHtml(ageGender || "-")}</div>
+      </div>
+      <div class="details-grid">
+        <div class="label">Admission Date</div><div class="value">: ${escapeHtml(hasText(draft.admissionDate) ? formatDateDMY(draft.admissionDate) : "-")}</div>
+        <div class="label">Discharge Date</div><div class="value">: ${escapeHtml(hasText(draft.dischargeDate) ? formatDateDMY(draft.dischargeDate) : "-")}</div>
+        ${doctorPrintRows(draft.doctors, draft.doctorName || "-")}
+      </div>
     </div>
   `;
 
   const clinicalPairs: Array<[string, string]> = [];
-  if (draft.chiefComplaints.length > 0) clinicalPairs.push(["Chief Complaints", joinNonEmpty(draft.chiefComplaints)]);
-  if (hasText(draft.patientHistory)) clinicalPairs.push(["History", draft.patientHistory.toUpperCase()]);
+  if (draft.chiefComplaints.length > 0) clinicalPairs.push(["Presenting Complaints", joinNonEmpty(draft.chiefComplaints)]);
+  if (hasText(draft.patientHistory)) clinicalPairs.push(["Past Medical History", draft.patientHistory.toUpperCase()]);
+  if (hasText(draft.allergies)) clinicalPairs.push(["Allergies", draft.allergies.toUpperCase()]);
   if (draft.provisionalDiagnosisText && draft.provisionalDiagnosisText.trim().length > 0)
-    clinicalPairs.push(["Provisional Diagnosis", draft.provisionalDiagnosisText.toUpperCase()]);
-  else if (draft.diagnosis.length > 0) clinicalPairs.push(["Provisional Diagnosis", joinNonEmpty(draft.diagnosis)]);
+    clinicalPairs.push(["Discharge Diagnosis", draft.provisionalDiagnosisText.toUpperCase()]);
+  else if (draft.diagnosis.length > 0) clinicalPairs.push(["Discharge Diagnosis", joinNonEmpty(draft.diagnosis)]);
   if (draft.investigations.length > 0) clinicalPairs.push(["Investigations", formatInvestigationsForDocument(draft.investigations)]);
   if (draft.surgicalProcedures.length > 0) clinicalPairs.push(["Surgical Procedure", formatSurgicalProceduresForDocument(draft.surgicalProcedures)]);
   if (draft.treatmentGiven.length > 0) clinicalPairs.push(["Medical Management", joinNonEmpty(draft.treatmentGiven)]);
-  if (hasText(draft.doctorNotes)) clinicalPairs.push(["Other Advice", draft.doctorNotes]);
-  const clinicalRows = clinicalPairs.length
+  const medicalManagementIndex = clinicalPairs.findIndex(([label]) => label === "Medical Management");
+  const initialClinicalPairs = medicalManagementIndex >= 0 ? clinicalPairs.slice(0, medicalManagementIndex) : clinicalPairs;
+  const postManagementPairs = medicalManagementIndex >= 0 ? clinicalPairs.slice(medicalManagementIndex) : [];
+  const detailsGrid = (pairs: Array<[string, string]>, className = "") => pairs.length
     ? `
-      <div class="details-grid">
-        ${clinicalPairs
+      <div class="details-grid ${className}">
+        ${pairs
           .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value">: ${escapeHtml(p[1])}</div>`)
           .join("")}
       </div>
     `
+    : "";
+  const clinicalRows = detailsGrid(initialClinicalPairs);
+  const postManagementRows = detailsGrid(postManagementPairs, "flow-details-grid");
+
+  const summaryRows = hasText(draft.referralSummary) && draft.summaryMode === "referral_summary"
+    ? `<h2>Discharge Summary</h2><div class="summary-text">${escapeHtml(draft.referralSummary)}</div>`
     : "";
 
   const referralPairs: Array<[string, string]> = [];
@@ -317,20 +365,20 @@ function createReferralHtml({
 
   const dischargePairs: Array<[string, string]> = [];
   if (draft.dischargedToHome) dischargePairs.push(["Discharge Status", "PATIENT DISCHARGED TO HOME"]);
-  if (hasText(draft.patientStatusDuringDischarge)) dischargePairs.push(["Patient Status During Discharge", draft.patientStatusDuringDischarge.toUpperCase()]);
-  if (hasText(draft.dischargeDate)) dischargePairs.push(["Discharge Date", formatDateDMY(draft.dischargeDate)]);
+  if (hasText(draft.patientConditionDuringDischarge)) dischargePairs.push(["Patient Condition During Discharge", draft.patientConditionDuringDischarge.toUpperCase()]);
+  if (draft.dischargedWithoutConsent) dischargePairs.push(["Discharge Status", "PATIENT DISCHARGED WITHOUT DOCTOR CONSENT"]);
   const dischargeOnlyRows = dischargePairs.length
     ? `
       <div class="details-grid">
         ${dischargePairs
-          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value">: ${escapeHtml(p[1])}</div>`)
+          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value discharge-value"><span class="doctor-colon">:</span><div class="discharge-details">${escapeHtml(p[1])}</div></div>`)
           .join("")}
       </div>
     `
     : "";
 
   const advicePairs: Array<[string, string]> = [];
-  if (draft.dietAdvice.length > 0) advicePairs.push(["Diet", joinNonEmpty(draft.dietAdvice)]);
+  if (draft.dietAdvice.length > 0) advicePairs.push(["Post Operative Precautionary Advice", joinNonEmpty(draft.dietAdvice)]);
   if (draft.dos.length > 0) advicePairs.push(["Do's", joinNonEmpty(draft.dos)]);
   if (draft.donts.length > 0) advicePairs.push(["Don'ts", joinNonEmpty(draft.donts)]);
   if (draft.emergencyWarnings.length > 0) advicePairs.push(["Emergency Warnings", joinNonEmpty(draft.emergencyWarnings)]);
@@ -353,50 +401,66 @@ function createReferralHtml({
         @page { size: A4; margin: 2in 14mm 1in 14mm; }
         body { font-family: Arial, sans-serif; color: #111; font-size: 11.5px; line-height: 1.35; }
         h1, h2 { margin: 0; }
-        h1 { font-size: 16px; }
+        h1 { font-size: 16px; text-align: center; }
+        .print-header h1 { grid-column: 2; }
+        .print-header { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; }
+        .print-header .muted { grid-column: 3; text-align: right; }
+        .doctor-value { display: grid; grid-template-columns: 6px minmax(0, 1fr); column-gap: 0; text-align: left; }
+        .doctor-details { min-width: 0; }
+        .doctor-degree { margin-left: 0; }
+        .discharge-value { display: grid; grid-template-columns: 6px minmax(0, 1fr); column-gap: 0; text-align: left; }
+        .discharge-details { min-width: 0; }
+        .signature-name { margin-top: 4px; font-weight: 700; }
         h2 { font-size: 12.5px; margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 3px; }
         .muted { color: #444; }
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-top: 8px; }
         .details-grid { display: grid; grid-template-columns: 160px 1fr; gap: 2px 8px; align-items: start; }
-        .details-grid .label { font-weight: 700; text-transform: uppercase; font-size: 11px; }
+        .flow-columns { column-count: 2; column-gap: 10px; column-fill: auto; height: 185mm; margin-top: 10px; }
+        .flow-columns > * { break-inside: avoid; }
+        .flow-details-grid { margin-top: 0; }
+        .patient-details-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .patient-details-columns .details-grid { grid-template-columns: 120px minmax(0, 1fr); }
+        .details-grid .label { font-weight: 700; font-size: 11px; }
         .details-grid .value { font-size: 11px; }
+        .summary-text { white-space: pre-line; font-size: 11px; margin-top: 6px; }
         .card { border: 1px solid #ddd; border-radius: 8px; padding: 8px; margin-top: 8px; }
         .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
         .panel { border: 1px solid #ddd; border-radius: 8px; padding: 8px; }
         ul { margin: 6px 0 0 18px; padding: 0; }
         li { white-space: pre-line; margin-bottom: 5px; }
         .row { margin-top: 5px; }
-        .footer { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .footer { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+        .footer-line { margin: 0; }
+        .footer-label { margin: 0 0 2px 12px; }
+        .footer-underline { margin: 0; white-space: nowrap; }
+        .hospital-seal { margin-left: 0; }
+        .hospital-seal .footer-label { margin-left: 28px; }
       </style>
     </head>
     <body>
-      <h1>${summaryLabel}</h1>
-      <div class="muted">Generated on ${formatDateTimeDMY(new Date())}</div>
+      <header class="print-header"><h1>${summaryLabel}</h1><div class="muted">Generated on ${formatDateTimeDMY(new Date())}</div></header>
 
       <div class="card">
         ${patientDetailRows}
       </div>
 
-      <div class="split" style="grid-template-columns: 1fr 1fr;">
-        <div class="panel">
-          ${clinicalRows}
+      ${clinicalRows ? `<div class="panel full-width-clinical">${clinicalRows}</div>` : ""}
 
-          ${medicationLines.length > 0 ? `<h2 style="margin-top: 10px;">Medications and Advice</h2><ul>${medicationLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : ""}
-        </div>
-
-        <div class="panel">
-          <h2>Referral Details</h2>
-          ${draft.summaryMode === "referral_summary" ? referralRows : dischargeOnlyRows}
-
-          ${adviceRows ? `<h2 style="margin-top: 10px;">Advice</h2>${adviceRows}` : ""}
-
-          <div class="footer">
-            <div>
-              <p>Doctor Signature: ____________________</p>
-            </div>
-            <div>
-              <p>Hospital Seal: ____________________</p>
-            </div>
+      <div class="flow-columns">
+        ${postManagementRows ? `<div class="panel">${postManagementRows}</div>` : ""}
+        ${medicationLines.length > 0 ? `<div class="panel"><h2>Medications and Advice</h2><ul>${medicationLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul></div>` : ""}
+        ${hasText(draft.doctorNotes) ? `<div class="panel"><h2>Other Advice</h2><div class="summary-text">${escapeHtml(draft.doctorNotes)}</div></div>` : ""}
+        ${draft.summaryMode === "referral_summary" && (referralRows || adviceRows) ? `<div class="panel">${draft.summaryMode === "referral_summary" ? "<h2>Referral Details</h2>" : ""}${referralRows}${adviceRows ? `<h2 style="margin-top: 10px;">Advice</h2>${adviceRows}` : ""}</div>` : ""}
+        ${draft.summaryMode !== "referral_summary" && (dischargeOnlyRows || adviceRows) ? `<div class="panel">${dischargeOnlyRows}${adviceRows ? `<h2 style="margin-top: 10px;">Advice</h2>${adviceRows}` : ""}</div>` : ""}
+        <div class="footer">
+          <div>
+            <p class="footer-label">Doctor Signature</p>
+            <p class="footer-underline">____________________</p>
+            <p class="signature-name">${doctorPrintHtml(treatingDoctors[0] || "-")}</p>
+          </div>
+          <div class="hospital-seal">
+            <p class="footer-label">Hospital Seal</p>
+            <p class="footer-underline">____________________</p>
           </div>
         </div>
       </div>
@@ -425,9 +489,10 @@ function ReferralsPage() {
   const [patientMedicineLibrary, setPatientMedicineLibrary] = useState<MedicineLibraryItem[]>([]);
   const [newMedicineType, setNewMedicineType] = useState<NonNullable<MedicationRow["medicineType"]>>("TAB");
   const [newMedicineName, setNewMedicineName] = useState("");
-  const [newMedicineDose, setNewMedicineDose] = useState("");
   const [isAddMedicineDialogOpen, setIsAddMedicineDialogOpen] = useState(false);
   const [selectedSavedMedicineIdLocal, setSelectedSavedMedicineIdLocal] = useState("");
+  const [medicineSectionRefreshKey, setMedicineSectionRefreshKey] = useState(0);
+  const [savedMedicationIds, setSavedMedicationIds] = useState<string[]>([]);
 
   const patients = useQuery(patientsQuery(search));
   const selectedPatient = useMemo(
@@ -441,7 +506,7 @@ function ReferralsPage() {
     if (draft.doctors.length > 0 || !draft.doctorName) return;
     setDraft((prev) => ({
       ...prev,
-      doctors: [{ ...DEFAULT_DOCTOR_PROFILE, name: prev.doctorName, id: createId() }],
+      doctors: [{ id: createId(), name: toUpper(prev.doctorName), degree: "", details: "" }],
     }));
   }, [draft.doctorName, draft.doctors.length, setDraft]);
 
@@ -541,73 +606,33 @@ function ReferralsPage() {
     });
   };
 
-  const addMedicineForFutureUse = () => {
-    const name = normalizeDetail(newMedicineName.trim());
-    const suggestedDose = normalizeDetail(newMedicineDose.trim());
+  const addMedicineToDraft = () => {
+    const name = toUpper(normalizeDetail(newMedicineName.trim()));
     if (!name) {
       toast.error("Enter medicine name");
       return false;
     }
-
-    const duplicate = medicineLibrary.some(
-      (item) => item.type === newMedicineType && item.name.trim().toLowerCase() === name.toLowerCase(),
-    );
-
-    if (duplicate) {
-      const existing = medicineLibrary.find(
-        (item) => item.type === newMedicineType && item.name.trim().toLowerCase() === name.toLowerCase(),
-      );
-      // Ensure there's at least one empty medication row available after saving to library.
-      setDraft((prev) => {
-        const hasEmpty = prev.medication.some((r) => !hasText(r.medicineName));
-        return hasEmpty ? prev : { ...prev, medication: [...prev.medication, { ...EMPTY_MEDICATION_ROW, id: createId() }] };
-      });
-      toast.success("Medicine already exists in saved list");
-      return true;
-    }
-
-    const nextItem: MedicineLibraryItem = {
-      id: createId(),
-      type: newMedicineType,
-      name,
-      suggestedDose,
-    };
-    const nextLibrary = [...medicineLibrary, nextItem];
-    setMedicineLibrary(nextLibrary);
-
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(MEDICINE_LIBRARY_KEY, JSON.stringify(nextLibrary));
-      if (patientId) {
-        try {
-          const raw = window.localStorage.getItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`);
-          const parsed = raw ? (JSON.parse(raw) as MedicineLibraryItem[]) : [];
-          const merged = Array.from(
-            new Map(
-              [...(Array.isArray(parsed) ? parsed : []), nextItem].map((it) => [`${it.type}:${it.name}`, it]),
-            ).values(),
-          );
-          window.localStorage.setItem(`${PATIENT_MEDICINE_LIBRARY_KEY_BASE}${patientId}`, JSON.stringify(merged));
-          setPatientMedicineLibrary(merged);
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    // Ensure there's at least one empty medication row available after saving to library.
     setDraft((prev) => {
-      const hasEmpty = prev.medication.some((r) => !hasText(r.medicineName));
-      return hasEmpty ? prev : { ...prev, medication: [...prev.medication, { ...EMPTY_MEDICATION_ROW, id: createId() }] };
+      const index = prev.medication.findIndex((row) => !hasText(row.medicineName));
+      const targetIndex = index >= 0 ? index : prev.medication.length;
+      return {
+        ...prev,
+        medication:
+          index >= 0
+            ? prev.medication.map((row, rowIndex) =>
+                rowIndex === targetIndex ? { ...row, medicineName: name, medicineType: newMedicineType } : row,
+              )
+            : [...prev.medication, { ...EMPTY_MEDICATION_ROW, id: createId(), medicineName: name, medicineType: newMedicineType }],
+      };
     });
 
     setNewMedicineName("");
-    setNewMedicineDose("");
-    toast.success("Medicine saved for future use and applied");
+    toast.success("Medicine added to the draft");
     return true;
   };
 
   const handleSaveMedicineFromDialog = () => {
-    const saved = addMedicineForFutureUse();
+    const saved = addMedicineToDraft();
     if (!saved) return;
     setIsAddMedicineDialogOpen(false);
   };
@@ -733,17 +758,16 @@ function ReferralsPage() {
     }
 
     setDraft((prev) => {
-      // Replace saved row with a fresh empty row so the UI resets immediately.
-      const next = prev.medication.map((item) => (item.id === row.id ? { ...EMPTY_MEDICATION_ROW, id: createId() } : item));
-      // Ensure at least one empty row exists
-      const hasEmptyRow = next.some((item) => !hasText(item.medicineName));
       return {
         ...prev,
-        medication: hasEmptyRow ? next : [...next, { ...EMPTY_MEDICATION_ROW, id: createId() }],
+        medication: [{ ...EMPTY_MEDICATION_ROW, id: createId() }],
+        savedMedicationEntries: [...prev.savedMedicationEntries, row],
       };
     });
+    setMedicineSectionRefreshKey((previous) => previous + 1);
+    setSavedMedicationIds((previous) => (previous.includes(row.id) ? previous : [...previous, row.id]));
 
-    toast.success("Medication entry saved. New blank entry added.");
+    toast.success("Medication entry saved and section refreshed.");
   };
 
   const printReferral = () => {
@@ -753,9 +777,12 @@ function ReferralsPage() {
       return;
     }
 
+    const summaryId = nextSummaryId(draft.summaryMode);
     const html = createReferralHtml({
       patientName: selectedPatient.full_name,
+      patientRegistrationId: selectedPatient.uhid,
       ageGender: `${selectedPatient.age ?? "-"} / ${selectedPatient.gender ?? "-"}`,
+      summaryId,
       draft,
     });
 
@@ -817,6 +844,30 @@ function ReferralsPage() {
     }, 250);
   };
 
+  const saveSummaryToQueue = (status: DischargeSummaryQueueItem["status"]) => {
+    if (!selectedPatient) {
+      toast.error("Select a patient before saving the summary");
+      return;
+    }
+    const item: DischargeSummaryQueueItem = {
+      id: createId(),
+      summaryId: nextSummaryId(draft.summaryMode),
+      patientId: selectedPatient.id,
+      patientName: toUpper(selectedPatient.full_name),
+      summaryMode: draft.summaryMode,
+      preparedAt: new Date().toISOString(),
+      status,
+    };
+    try {
+      const existing = JSON.parse(window.localStorage.getItem(DISCHARGE_SUMMARY_QUEUE_KEY) || "[]") as DischargeSummaryQueueItem[];
+      const next = [item, ...(Array.isArray(existing) ? existing : [])].slice(0, 100);
+      window.localStorage.setItem(DISCHARGE_SUMMARY_QUEUE_KEY, JSON.stringify(next));
+      toast.success(status === "draft" ? "Summary saved as draft" : "Summary saved");
+    } catch {
+      toast.error("Summary could not be saved");
+    }
+  };
+
   const exportPdf = () => {
     if (!selectedPatient) {
       toast.error("Select a patient before exporting PDF");
@@ -854,38 +905,61 @@ function ReferralsPage() {
       writeBlock(title, value);
     };
 
+    const writeInlineBlock = (title: string, value: string) => {
+      const values = value.split("\n");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text(`${title}:`, margin, y);
+      doc.setFont("helvetica", "normal");
+      doc.text(values[0] || "-", margin + 38, y);
+      values.slice(1).forEach((line) => {
+        y += 4.8;
+        doc.text(line, margin + 38, y);
+      });
+      y += 7;
+    };
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(15);
     const summaryLabel = draft.summaryMode === "referral_summary" ? "REFERRAL SUMMARY" : "DISCHARGE SUMMARY";
-    doc.text(`Bhagwati Hospital ERP - ${summaryLabel}`, margin, y);
+    const summaryId = nextSummaryId(draft.summaryMode);
+    doc.text(summaryLabel, pageWidth / 2, y, { align: "center" });
     y += 6;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text(`Generated: ${formatDateTimeDMY(new Date())}`, margin, y);
+    doc.text(`Generated: ${formatDateTimeDMY(new Date())}`, pageWidth - margin, y, { align: "right" });
     y += 7;
 
+    writeBlock(draft.summaryMode === "referral_summary" ? "Referral ID" : "Discharge ID", summaryId);
+    writeBlock("Patient Registration ID", selectedPatient.uhid);
     writeBlock("Patient Name", selectedPatient.full_name);
     writeBlockIfValue("Age/Sex", `${selectedPatient.age ?? ""} / ${selectedPatient.gender ?? ""}`.replace(/^\s*\/\s*$/, ""));
     writeBlockIfValue("Admission Date", formatDateDMY(draft.admissionDate));
     writeBlockIfValue("Discharge Date", formatDateDMY(draft.dischargeDate));
-    writeBlockIfValue("Doctors", draft.doctors.length > 0 ? draft.doctors.map(doctorDisplayName).join("; ") : draft.doctorName);
-    writeBlockIfValue("Chief Complaints", joinNonEmpty(draft.chiefComplaints));
-    writeBlockIfValue("History", draft.patientHistory.toUpperCase());
-    writeBlockIfValue("Provisional Diagnosis", String(draft.provisionalDiagnosisText ?? "").toUpperCase());
+    const printableDoctors = draft.doctors.length > 0
+      ? draft.doctors
+      : [{ id: "fallback", name: draft.doctorName, degree: "", details: "" }];
+    printableDoctors.forEach((doctor, index) => {
+      writeInlineBlock(index === 0 ? "Treating Doctor" : "Co-surgeon", [doctor.name, doctor.degree].filter(hasText).join("\n"));
+    });
+    writeBlockIfValue(draft.summaryMode === "referral_summary" ? "Referral Summary" : "Discharge Summary", draft.referralSummary);
+    writeBlockIfValue("Presenting Complaints", joinNonEmpty(draft.chiefComplaints));
+    writeBlockIfValue("Past Medical History", draft.patientHistory.toUpperCase());
+    writeBlockIfValue("Allergies", draft.allergies.toUpperCase());
+    writeBlockIfValue("Discharge Diagnosis", String(draft.provisionalDiagnosisText ?? "").toUpperCase());
     writeBlockIfValue("Diagnosis", joinNonEmpty(draft.diagnosis));
     if (draft.investigations.length > 0) writeBlock("Investigations", formatInvestigationsForDocument(draft.investigations));
     if (draft.surgicalProcedures.length > 0) writeBlock("Surgical Procedure", formatSurgicalProceduresForDocument(draft.surgicalProcedures));
     writeBlockIfValue("Medical Management", joinNonEmpty(draft.treatmentGiven));
     writeBlockIfValue("Other Advice", draft.doctorNotes);
 
-    const medicationText = draft.medication
+    const medicationText = [...draft.savedMedicationEntries, ...draft.medication]
       .filter((med) => med.medicineName.trim().length > 0)
       .map(medicationSchedulePrintBlock)
       .join("\n\n");
     writeBlockIfValue("Medications and Advice", medicationText);
 
     writeBlockIfValue("Referral Reason", draft.referralReason);
-    writeBlockIfValue(summaryLabel, draft.referralSummary);
     writeBlockIfValue(
       "Referred To",
       [
@@ -899,11 +973,14 @@ function ReferralsPage() {
     writeBlockIfValue("Urgency", draft.urgency);
     writeBlockIfValue("Transfer Mode", draft.transferMode);
     if (draft.dischargedToHome) writeBlock("Discharge Status", "PATIENT DISCHARGED TO HOME");
-    writeBlockIfValue("Patient Status During Discharge", draft.patientStatusDuringDischarge.toUpperCase());
-    writeBlockIfValue("Diet Advice", joinNonEmpty(draft.dietAdvice));
+    writeBlockIfValue("Patient Condition During Discharge", draft.patientConditionDuringDischarge.toUpperCase());
+    if (draft.dischargedWithoutConsent) writeBlock("Discharge Status", "PATIENT DISCHARGED WITHOUT DOCTOR CONSENT");
+    writeBlockIfValue("Post Operative Precautionary Advice", joinNonEmpty(draft.dietAdvice));
     writeBlockIfValue("Do's", joinNonEmpty(draft.dos));
     writeBlockIfValue("Don'ts", joinNonEmpty(draft.donts));
     writeBlockIfValue("Emergency Warnings", joinNonEmpty(draft.emergencyWarnings));
+    writeBlock("Doctor Signature", "____________________");
+    writeBlock("Doctor Name", draft.doctors[0] ? doctorDisplayName(draft.doctors[0]) : draft.doctorName || "-");
 
     const fileSafeName = selectedPatient.full_name.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "");
     doc.save(`referral-summary-${fileSafeName || "patient"}-${selectedPatient.uhid}.pdf`);
@@ -1037,7 +1114,7 @@ function ReferralsPage() {
           />
 
           <SmartMultiPicker
-            title="Chief Complaints"
+            title="Presenting Complaints"
             allItems={COMPLAINTS_LIBRARY}
             value={draft.chiefComplaints}
             onChange={(next) => setDraft((prev) => ({ ...prev, chiefComplaints: next }))}
@@ -1047,82 +1124,50 @@ function ReferralsPage() {
 
           <div className="space-y-2 rounded-2xl border border-border/70 p-3">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-medium">History</p>
+              <p className="text-sm font-medium">Past Medical History</p>
               <Dialog>
                 <DialogTrigger asChild>
                   <Button type="button" variant="secondary" size="sm">Open History Dialog</Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Patient History</DialogTitle>
-                    <DialogDescription>Enter patient history details.</DialogDescription>
+                    <DialogTitle>Past Medical History</DialogTitle>
+                    <DialogDescription>Enter patient past medical history details.</DialogDescription>
                   </DialogHeader>
                   <Textarea
                     rows={8}
                     value={draft.patientHistory}
                     onChange={(e) => setDraft((prev) => ({ ...prev, patientHistory: toUpper(e.target.value) }))}
                     className="uppercase"
-                    placeholder="PATIENT HISTORY"
+                    placeholder="PAST MEDICAL HISTORY"
                   />
                 </DialogContent>
               </Dialog>
             </div>
-            <p className="text-xs uppercase text-muted-foreground">{draft.patientHistory || "No history added yet."}</p>
+            <p className="text-xs uppercase text-muted-foreground">{draft.patientHistory || "No past medical history added yet."}</p>
+          </div>
+
+          <div className="space-y-2 rounded-2xl border border-border/70 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium">Allergies</p>
+            </div>
+            <Textarea
+              rows={3}
+              value={draft.allergies}
+              onChange={(e) => setDraft((prev) => ({ ...prev, allergies: toUpper(e.target.value) }))}
+              className="uppercase"
+              placeholder="ALLERGIES"
+            />
           </div>
 
           <SmartMultiPicker
-            title="Provisional Diagnosis"
+            title="Discharge Diagnosis"
             allItems={DIAGNOSIS_LIBRARY}
             value={draft.diagnosis}
             onChange={(next) => setDraft((prev) => ({ ...prev, diagnosis: next }))}
             persistKey={DIAGNOSIS_USER_LIBRARY_KEY}
             addLabel="Add Diagnosis"
           />
-
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-medium">Provisional Diagnosis (Long Note)</p>
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button type="button" variant="secondary" size="sm">Open Provisional Diagnosis Dialog</Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Provisional Diagnosis</DialogTitle>
-                  <DialogDescription>Enter long provisional diagnosis notes.</DialogDescription>
-                </DialogHeader>
-                <Textarea
-                  rows={8}
-                  value={draft.provisionalDiagnosisText || ""}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, provisionalDiagnosisText: toUpper(e.target.value) }))}
-                  className="uppercase"
-                  placeholder="PROVISIONAL DIAGNOSIS"
-                />
-              </DialogContent>
-            </Dialog>
-          </div>
-          <p className="text-xs uppercase text-muted-foreground">{draft.provisionalDiagnosisText || "No provisional diagnosis added yet."}</p>
-
-          <div className="flex items-center justify-end">
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button type="button" variant="secondary" size="sm">Open Provisional Dialog</Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Provisional Diagnosis</DialogTitle>
-                  <DialogDescription>Select or add provisional diagnoses.</DialogDescription>
-                </DialogHeader>
-                <SmartMultiPicker
-                  title="Provisional Diagnosis"
-                  allItems={DIAGNOSIS_LIBRARY}
-                  value={draft.diagnosis}
-                  onChange={(next) => setDraft((prev) => ({ ...prev, diagnosis: next }))}
-                  persistKey={DIAGNOSIS_USER_LIBRARY_KEY}
-                  addLabel="Add Diagnosis"
-                />
-              </DialogContent>
-            </Dialog>
-          </div>
 
           <InvestigationEditor
             value={draft.investigations}
@@ -1146,6 +1191,7 @@ function ReferralsPage() {
         </SectionCard>
 
         <SectionCard
+          key={medicineSectionRefreshKey}
           title="Medications and Advice"
           description="Pharmacy linked structure with schedule-ready data"
           icon={HeartPulse}
@@ -1162,7 +1208,7 @@ function ReferralsPage() {
                   <DialogHeader>
                     <DialogTitle>Add New Medicine</DialogTitle>
                     <DialogDescription>
-                      Fill medicine details and save for future use.
+                      Fill medicine details to add it to this draft.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-3">
@@ -1199,15 +1245,6 @@ function ReferralsPage() {
                         placeholder="Enter medicine name"
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="new-medicine-dose">Suggested Dose</Label>
-                      <Input
-                        id="new-medicine-dose"
-                        value={newMedicineDose}
-                        onChange={(e) => setNewMedicineDose(e.target.value)}
-                        placeholder="e.g. 500 MG, 5 ML"
-                      />
-                    </div>
                   </div>
                   <DialogFooter>
                     <Button type="button" variant="outline" onClick={() => setIsAddMedicineDialogOpen(false)}>
@@ -1220,78 +1257,6 @@ function ReferralsPage() {
                 </DialogContent>
               </Dialog>
 
-              <div className="max-h-40 space-y-1 overflow-auto rounded-xl border border-border/70 p-2">
-                {medicineLibrary.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No saved medicines yet.</p>
-                ) : (
-                  medicineLibrary.map((item) => (
-                    <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg bg-muted/40 px-2 py-1 text-xs">
-                      <span>
-                        {item.type} - {item.name}
-                        {hasText(item.suggestedDose || "") ? ` (${item.suggestedDose})` : ""}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="sm"
-                        className="h-6 px-2 text-[10px]"
-                        onClick={() => removeMedicineFromLibrary(item.id)}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              
-            </div>
-
-            {/* Saved medicines dropdown moved below medicine listing and above Other Advice */}
-
-            <div className="mb-2">
-              <Label>Saved medicines (verify)</Label>
-              <Select
-                value={selectedSavedMedicineIdLocal}
-                onValueChange={(value) => setSelectedSavedMedicineIdLocal(value)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select saved medicine to verify" />
-                </SelectTrigger>
-                <SelectContent>
-                  {((patientMedicineLibrary.length > 0 ? patientMedicineLibrary : medicineLibrary) || [])
-                    .slice()
-                    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
-                    .map((item) => {
-                      const prescribed = draft.medication.some(
-                        (m) => hasText(m.medicineName) && m.medicineName.trim().toLowerCase() === item.name.trim().toLowerCase() && (m.medicineType || "TAB") === item.type,
-                      );
-                      return (
-                        <SelectItem key={item.id} value={item.id}>
-                          {item.type} - {item.name}{hasText(item.suggestedDose || "") ? ` (${item.suggestedDose})` : ""}{prescribed ? ` · PRESCRIBED` : ""}
-                        </SelectItem>
-                      );
-                    })}
-                </SelectContent>
-              </Select>
-
-              {selectedSavedMedicineIdLocal ? (
-                <p className="text-xs text-muted-foreground mt-2">
-                  {(() => {
-                    const sel = (patientMedicineLibrary.length > 0 ? patientMedicineLibrary : medicineLibrary).find((m) => m.id === selectedSavedMedicineIdLocal);
-                    if (!sel) return "Selected medicine not found.";
-                    const presRows = draft.medication
-                      .filter(
-                        (m) => hasText(m.medicineName) && m.medicineName.trim().toLowerCase() === sel.name.trim().toLowerCase() && (m.medicineType || "TAB") === sel.type,
-                      )
-                      .map((m) => `${m.medicineType ?? ""} ${m.medicineName}${m.dose ? ` (${m.dose})` : ""}`);
-                    if (presRows.length === 0) return `${sel.type} - ${sel.name} is NOT prescribed in this draft.`;
-                    return `${sel.type} - ${sel.name} is prescribed in: ${presRows.join("; ")}`;
-                  })()}
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground mt-2">Choose a saved medicine to verify whether it's prescribed.</p>
-              )}
             </div>
 
             {draft.medication.map((row) => (
@@ -1299,15 +1264,17 @@ function ReferralsPage() {
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="text-xs font-medium text-muted-foreground">Medicine entry</p>
                   <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => saveMedicationEntry(row)}
-                    >
-                      Save Entry
-                    </Button>
+                    {!savedMedicationIds.includes(row.id) && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => saveMedicationEntry(row)}
+                      >
+                        Save Entry
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="destructive"
@@ -1330,54 +1297,31 @@ function ReferralsPage() {
                       <SelectValue placeholder="Medicine Type" />
                     </SelectTrigger>
                     <SelectContent>
-                      {MEDICINE_TYPES.map((type) => (
+                      {MEDICINE_TYPES.slice().sort((a, b) => String(a).localeCompare(String(b))).map((type) => (
                         <SelectItem key={type} value={type}>
                           {type}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <Select
-                    value={hasText(row.medicineName) ? `${row.medicineType ?? "TAB"}:${row.medicineName}` : undefined}
-                    onValueChange={(value) => {
-                      if (!value) return;
-                      const [type, ...nameParts] = value.split(":");
-                      const name = nameParts.join(":") || "";
-                      const selected = medicineOptions.find((item) => `${item.type}:${item.name}` === value);
-                      updateMedication(row.id, {
-                        medicineType: (type as MedicationRow["medicineType"]) || row.medicineType,
-                        medicineName: name,
-                        dose: selected?.suggestedDose || row.dose,
-                      });
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Medicine" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {medicineOptions.map((item) => (
-                        <SelectItem key={`${item.type}-${item.name}`} value={`${item.type}:${item.name}`}>
-                          {item.type} - {item.name}{item.suggestedDose ? ` (${item.suggestedDose})` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Input
+                    placeholder="Medicine name"
+                    value={row.medicineName}
+                    onChange={(e) => updateMedication(row.id, { medicineName: toUpper(e.target.value) })}
+                  />
                   <Input
                     type="number"
-                    min={1}
+                    min={0}
+                    className="no-spinner"
                     placeholder="Duration days"
                     value={row.durationDays}
-                    onChange={(e) => updateMedication(row.id, { durationDays: Number(e.target.value) || 1 })}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => updateMedication(row.id, { durationDays: Number(e.target.value) || 0 })}
                   />
                   <Input
                     placeholder="Dose"
                     value={row.dose}
                     onChange={(e) => updateMedication(row.id, { dose: toUpper(e.target.value) })}
-                  />
-                  <Input
-                    placeholder="Drug quantity"
-                    value={row.strength}
-                    onChange={(e) => updateMedication(row.id, { strength: toUpper(e.target.value) })}
                   />
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
@@ -1406,6 +1350,11 @@ function ReferralsPage() {
                     checked={Boolean(row.hs)}
                     onCheckedChange={(checked) => updateMedication(row.id, { hs: checked })}
                   />
+                  <Tick
+                    label="SOS"
+                    checked={Boolean(row.sos)}
+                    onCheckedChange={(checked) => updateMedication(row.id, { sos: checked })}
+                  />
                   <Select
                     value={row.foodTiming}
                     onValueChange={(value) =>
@@ -1416,91 +1365,62 @@ function ReferralsPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="empty_stomach">1 EMPTY STOMACH</SelectItem>
-                      <SelectItem value="after_meal">2 AFTER MEAL</SelectItem>
-                      <SelectItem value="hs">3 HS</SelectItem>
-                      <SelectItem value="sos">4 SOS</SelectItem>
-                      <SelectItem value="before_breakfast">5 BEFORE BREAKFAST</SelectItem>
-                      <SelectItem value="after_breakfast">6 AFTER BREAKFAST</SelectItem>
-                      <SelectItem value="after_lunch">7 AFTER LUNCH</SelectItem>
-                      <SelectItem value="after_lunch_2">8 AFTER LUNCH</SelectItem>
+                      <SelectItem value="before_breakfast">BEFORE BREAKFAST</SelectItem>
+                      <SelectItem value="after_breakfast">AFTER BREAKFAST</SelectItem>
+                      <SelectItem value="after_lunch">AFTER LUNCH</SelectItem>
+                      <SelectItem value="after_lunch_2">AFTER LUNCH</SelectItem>
+                      <SelectItem value="after_meal">AFTER MEAL</SelectItem>
+                      <SelectItem value="empty_stomach">EMPTY STOMACH</SelectItem>
+                      <SelectItem value="none">NONE</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <Input
-                  className="mt-2"
-                  placeholder="Special instruction"
-                  value={row.specialInstruction}
-                  onChange={(e) => updateMedication(row.id, { specialInstruction: toUpper(e.target.value) })}
-                />
               </article>
             ))}
 
-            <Button variant="secondary" className="w-full" onClick={addMedicationRow}>
-              Add medicine row
-            </Button>
           </div>
 
           <div className="space-y-2">
-            <Label>Saved medicines (patient)</Label>
-            <Select
-              value={""}
-              onValueChange={(value) => {
-                if (!value) return;
-                const selected = (patientMedicineLibrary.length > 0 ? patientMedicineLibrary : medicineLibrary).find((m) => m.id === value);
-                if (!selected) return;
-                // apply to first empty medication row or append
-                setDraft((prev) => {
-                  const emptyIndex = prev.medication.findIndex((r) => !hasText(r.medicineName));
-                  if (emptyIndex >= 0) {
-                    const next = prev.medication.map((item, i) =>
-                      i === emptyIndex
-                        ? {
-                            ...item,
-                            medicineName: selected.name,
-                            medicineType: selected.type,
-                            dose: selected.suggestedDose ?? item.dose,
-                          }
-                        : item,
-                    );
-                    return { ...prev, medication: next };
-                  }
-                  return {
-                    ...prev,
-                    medication: [
-                      ...prev.medication,
-                      {
-                        ...EMPTY_MEDICATION_ROW,
-                        id: createId(),
-                        medicineName: selected.name,
-                        medicineType: selected.type,
-                        dose: selected.suggestedDose ?? "",
-                      },
-                    ],
-                  };
-                });
-              }}
-            >
+            <Label>Saved med for patient</Label>
+            <Select value={selectedSavedMedicineIdLocal} onValueChange={setSelectedSavedMedicineIdLocal}>
               <SelectTrigger>
-                <SelectValue placeholder="Apply saved medicine to draft" />
+                <SelectValue placeholder="Select saved med for patient" />
               </SelectTrigger>
               <SelectContent>
-                {(patientMedicineLibrary.length === 0 && medicineLibrary.length === 0) ? (
-                  <SelectItem value="">No saved medicines</SelectItem>
+                {patientMedicineLibrary.length === 0 ? (
+                  <SelectItem value="no-saved-medicines" disabled>No saved medicines for this patient</SelectItem>
                 ) : (
-                  (patientMedicineLibrary.length > 0 ? patientMedicineLibrary : medicineLibrary)
+                  patientMedicineLibrary
                     .slice()
                     .sort((a, b) => String(a.name).localeCompare(String(b.name)))
-                    .map((item) => (
-                      <SelectItem key={item.id} value={item.id}>
-                        {item.type} - {item.name}
-                        {hasText(item.suggestedDose || "") ? ` (${item.suggestedDose})` : ""}
-                      </SelectItem>
-                    ))
+                    .map((item) => {
+                      const prescribed = [...draft.savedMedicationEntries, ...draft.medication].some(
+                        (row) => hasText(row.medicineName) && row.medicineName.trim().toLowerCase() === item.name.trim().toLowerCase() && (row.medicineType ?? "TAB") === item.type,
+                      );
+                      return (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.type} - {item.name} · {prescribed ? "PRESCRIBED" : "NOT PRESCRIBED"}
+                        </SelectItem>
+                      );
+                    })
                 )}
               </SelectContent>
             </Select>
+            {selectedSavedMedicineIdLocal && (
+              <p className="text-xs text-muted-foreground">
+                {(() => {
+                  const selected = patientMedicineLibrary.find((item) => item.id === selectedSavedMedicineIdLocal);
+                  if (!selected) return "Saved medicine not found.";
+                    const prescribed = [...draft.savedMedicationEntries, ...draft.medication].some(
+                    (row) => hasText(row.medicineName) && row.medicineName.trim().toLowerCase() === selected.name.trim().toLowerCase() && (row.medicineType ?? "TAB") === selected.type,
+                  );
+                  return `${selected.type} - ${selected.name}: ${prescribed ? "PRESCRIBED" : "NOT PRESCRIBED"}`;
+                })()}
+              </p>
+            )}
+          </div>
 
+          <div className="space-y-2">
             <Label htmlFor="doctorNotes">Other Advice</Label>
             <Textarea
               id="doctorNotes"
@@ -1525,19 +1445,31 @@ function ReferralsPage() {
                 <DialogHeader>
                   <DialogTitle>Patient Discharge Confirmation</DialogTitle>
                   <DialogDescription>
-                    Tick to confirm the patient is discharged to home.
+                    Tick to confirm the discharge status.
                   </DialogDescription>
                 </DialogHeader>
 
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={draft.dischargedToHome}
-                    onCheckedChange={(checked) =>
-                      setDraft((prev) => ({ ...prev, dischargedToHome: Boolean(checked) }))
-                    }
-                  />
-                  PATIENT DISCHARGED TO HOME
-                </label>
+                <div className="space-y-3">
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={draft.dischargedToHome}
+                      onCheckedChange={(checked) =>
+                        setDraft((prev) => ({ ...prev, dischargedToHome: Boolean(checked) }))
+                      }
+                    />
+                    PATIENT DISCHARGED TO HOME
+                  </label>
+
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={draft.dischargedWithoutConsent}
+                      onCheckedChange={(checked) =>
+                        setDraft((prev) => ({ ...prev, dischargedWithoutConsent: Boolean(checked) }))
+                      }
+                    />
+                    PATIENT DISCHARGE WITHOUT DOCTOR CONSENT
+                  </label>
+                </div>
 
                 <DialogFooter>
                   <DialogClose asChild>
@@ -1548,14 +1480,14 @@ function ReferralsPage() {
             </Dialog>
 
             <div className="space-y-2 rounded-2xl border border-border/70 p-3">
-              <Label htmlFor="patientStatusDuringDischarge">Patient Status During Discharge</Label>
+              <Label htmlFor="patientConditionDuringDischarge">Patient Condition During Discharge</Label>
               <Textarea
-                id="patientStatusDuringDischarge"
+                id="patientConditionDuringDischarge"
                 rows={8}
-                value={draft.patientStatusDuringDischarge}
-                onChange={(e) => setDraft((prev) => ({ ...prev, patientStatusDuringDischarge: toUpper(e.target.value) }))}
+                value={draft.patientConditionDuringDischarge}
+                onChange={(e) => setDraft((prev) => ({ ...prev, patientConditionDuringDischarge: toUpper(e.target.value) }))}
                 className="uppercase"
-                placeholder="PATIENT STATUS DURING DISCHARGE"
+                placeholder="PATIENT CONDITION DURING DISCHARGE"
               />
             </div>
           </div>
@@ -1598,12 +1530,13 @@ function ReferralsPage() {
           </div>
 
           <SmartMultiPicker
-            title="Diet Advice"
+            title="Post Operative Precautionary Advice"
             allItems={DIET_LIBRARY}
             value={draft.dietAdvice}
             onChange={(next) => setDraft((prev) => ({ ...prev, dietAdvice: next }))}
             persistKey={DIET_USER_LIBRARY_KEY}
             addLabel="Add"
+            disabled
           />
 
           <SmartMultiPicker
@@ -1613,6 +1546,7 @@ function ReferralsPage() {
             onChange={(next) => setDraft((prev) => ({ ...prev, dos: next }))}
             persistKey={DOS_USER_LIBRARY_KEY}
             addLabel="Add"
+            disabled
           />
 
           <SmartMultiPicker
@@ -1622,108 +1556,124 @@ function ReferralsPage() {
             onChange={(next) => setDraft((prev) => ({ ...prev, donts: next }))}
             persistKey={DONTS_USER_LIBRARY_KEY}
             addLabel="Add"
+            disabled
           />
         </SectionCard>
 
-        <SectionCard
-          title={draft.summaryMode === "referral_summary" ? "Referral Summary" : "Discharge Summary"}
-          description="New column for transfer-ready referral document"
-          icon={FileText}
-        >
-          <div className="space-y-2">
-            <Label htmlFor="referralReason">Reason for referral</Label>
-            <Input
-              id="referralReason"
-              placeholder="Need higher center ICU support"
-              value={draft.referralReason}
-              onChange={(e) => setDraft((prev) => ({ ...prev, referralReason: toUpper(e.target.value) }))}
+        {draft.summaryMode === "referral_summary" && (
+          <SectionCard
+            title="Referral Summary"
+            description="New column for transfer-ready referral document"
+            icon={FileText}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="referralReason">Reason for referral</Label>
+              <Input
+                id="referralReason"
+                placeholder="Need higher center ICU support"
+                value={draft.referralReason}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referralReason: toUpper(e.target.value) }))}
+              />
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input
+                placeholder="Referred hospital"
+                value={draft.referredHospital}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referredHospital: toUpper(e.target.value) }))}
+              />
+              <Input
+                placeholder="Department"
+                value={draft.referredDepartment}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referredDepartment: toUpper(e.target.value) }))}
+              />
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input
+                placeholder="Referred doctor"
+                value={draft.referredDoctor}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referredDoctor: toUpper(e.target.value) }))}
+              />
+              <Input
+                placeholder="Transfer mode"
+                value={draft.transferMode}
+                onChange={(e) => setDraft((prev) => ({ ...prev, transferMode: toUpper(e.target.value) }))}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Urgency</Label>
+              <Select
+                value={draft.urgency}
+                onValueChange={(value) =>
+                  setDraft((prev) => ({ ...prev, urgency: value as "routine" | "priority" | "emergency" }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="emergency">Emergency</SelectItem>
+                  <SelectItem value="priority">Priority</SelectItem>
+                  <SelectItem value="routine">Routine</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="referralSummary">Referral Summary</Label>
+              <Textarea
+                id="referralSummary"
+                rows={7}
+                value={draft.referralSummary}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referralSummary: toUpper(e.target.value) }))}
+                placeholder="History, key findings, treatment done and reason for transfer"
+              />
+            </div>
+
+            <SmartMultiPicker
+              title="Emergency Warning"
+              allItems={EMERGENCY_WARNING_LIBRARY}
+              value={draft.emergencyWarnings}
+              onChange={(next) => setDraft((prev) => ({ ...prev, emergencyWarnings: next }))}
+              persistKey={EMERGENCY_WARNING_USER_LIBRARY_KEY}
+              addLabel="Add"
             />
-          </div>
 
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Input
-              placeholder="Referred hospital"
-              value={draft.referredHospital}
-              onChange={(e) => setDraft((prev) => ({ ...prev, referredHospital: toUpper(e.target.value) }))}
-            />
-            <Input
-              placeholder="Department"
-              value={draft.referredDepartment}
-              onChange={(e) => setDraft((prev) => ({ ...prev, referredDepartment: toUpper(e.target.value) }))}
-            />
-          </div>
+            <div className="neo-inset rounded-2xl p-3 text-xs text-muted-foreground">
+              <p className="mb-1 flex items-center gap-1 font-medium text-foreground">
+                <AlertTriangle className="size-4 text-amber-500" /> Referral ready preview
+              </p>
+              <p>
+                {selectedPatient?.full_name || "Patient"} is referred to {draft.referredHospital || "_____"} ({draft.referredDepartment || "_____"})
+                {draft.referredDoctor ? ` under Dr. ${draft.referredDoctor}` : ""} as {draft.urgency} priority.
+              </p>
+            </div>
 
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Input
-              placeholder="Referred doctor"
-              value={draft.referredDoctor}
-              onChange={(e) => setDraft((prev) => ({ ...prev, referredDoctor: toUpper(e.target.value) }))}
-            />
-            <Input
-              placeholder="Transfer mode"
-              value={draft.transferMode}
-              onChange={(e) => setDraft((prev) => ({ ...prev, transferMode: toUpper(e.target.value) }))}
-            />
-          </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Button type="button" variant="outline" onClick={() => saveSummaryToQueue("draft")}>Save as draft</Button>
+              <Button type="button" onClick={printReferral}>Print</Button>
+              <Button type="button" variant="secondary" onClick={() => saveSummaryToQueue("saved")}>Save</Button>
+            </div>
+          </SectionCard>
+        )}
 
-          <div className="space-y-2">
-            <Label>Urgency</Label>
-            <Select
-              value={draft.urgency}
-              onValueChange={(value) =>
-                setDraft((prev) => ({ ...prev, urgency: value as "routine" | "priority" | "emergency" }))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="routine">Routine</SelectItem>
-                <SelectItem value="priority">Priority</SelectItem>
-                <SelectItem value="emergency">Emergency</SelectItem>
-              </SelectContent>
-            </Select>
+        {draft.summaryMode === "discharge_summary" && (
+          <div className="neo space-y-4 p-4">
+            <header>
+              <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
+                <FileText className="size-4 text-primary" /> Discharge Summary
+              </h2>
+              <p className="text-xs text-muted-foreground">Discharge summary is included in the clinical record.</p>
+            </header>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Button type="button" variant="outline" onClick={() => saveSummaryToQueue("draft")}>Save as draft</Button>
+              <Button type="button" onClick={printReferral}>Print</Button>
+              <Button type="button" variant="secondary" onClick={() => saveSummaryToQueue("saved")}>Save</Button>
+            </div>
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="referralSummary">
-              {draft.summaryMode === "referral_summary" ? "Referral Summary" : "Discharge Summary"}
-            </Label>
-            <Textarea
-              id="referralSummary"
-              rows={7}
-              value={draft.referralSummary}
-              onChange={(e) => setDraft((prev) => ({ ...prev, referralSummary: toUpper(e.target.value) }))}
-              placeholder="History, key findings, treatment done and reason for transfer"
-            />
-          </div>
-
-          <SmartMultiPicker
-            title="Emergency Warning"
-            allItems={EMERGENCY_WARNING_LIBRARY}
-            value={draft.emergencyWarnings}
-            onChange={(next) => setDraft((prev) => ({ ...prev, emergencyWarnings: next }))}
-            persistKey={EMERGENCY_WARNING_USER_LIBRARY_KEY}
-            addLabel="Add"
-          />
-
-          <div className="neo-inset rounded-2xl p-3 text-xs text-muted-foreground">
-            <p className="mb-1 flex items-center gap-1 font-medium text-foreground">
-              <AlertTriangle className="size-4 text-amber-500" /> Referral ready preview
-            </p>
-            <p>
-              {selectedPatient?.full_name || "Patient"} is referred to {draft.referredHospital || "_____"} ({draft.referredDepartment || "_____"})
-              {draft.referredDoctor ? ` under Dr. ${draft.referredDoctor}` : ""} as {draft.urgency} priority.
-            </p>
-          </div>
-
-          <div className="flex gap-2">
-            <Button type="button" className="flex-1" onClick={printReferral}>Print Referral</Button>
-            <Button type="button" variant="secondary" className="flex-1" onClick={exportPdf}>
-              Export PDF
-            </Button>
-          </div>
-        </SectionCard>
+        )}
 
       </section>
 
@@ -1776,6 +1726,7 @@ function SurgicalProcedureEditor({
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingFinding, setEditingFinding] = useState("");
   const [newProcedure, setNewProcedure] = useState("");
+  const [isAddProcedureDialogOpen, setIsAddProcedureDialogOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1786,7 +1737,7 @@ function SurgicalProcedureEditor({
       if (!Array.isArray(parsed)) return;
 
       const normalizedStored = parsed
-        .map((item) => normalizeDetail(String(item)))
+        .map((item) => toUpper(normalizeDetail(String(item))))
         .filter((item) => item.trim().length > 0);
 
       if (normalizedStored.length === 0) return;
@@ -1797,7 +1748,7 @@ function SurgicalProcedureEditor({
   }, []);
 
   const addProcedureToDraft = () => {
-    const procedure = normalizeDetail(selectedProcedure.trim());
+    const procedure = toUpper(normalizeDetail(selectedProcedure.trim()));
     if (!procedure) return;
     onChange([
       ...value,
@@ -1836,7 +1787,7 @@ function SurgicalProcedureEditor({
   };
 
   const addNewProcedureToLibrary = () => {
-    const procedure = normalizeDetail(newProcedure.trim());
+    const procedure = toUpper(normalizeDetail(newProcedure.trim()));
     if (!procedure) return;
 
     const alreadyExists = libraryItems.some((item) => item.toLowerCase() === procedure.toLowerCase());
@@ -1872,7 +1823,7 @@ function SurgicalProcedureEditor({
             <SelectValue placeholder="Select procedure" />
           </SelectTrigger>
           <SelectContent>
-            {libraryItems.map((item) => (
+            {libraryItems.slice().sort((a, b) => a.localeCompare(b)).map((item) => (
               <SelectItem key={item} value={item}>
                 {item}
               </SelectItem>
@@ -1882,15 +1833,30 @@ function SurgicalProcedureEditor({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Input
-          value={newProcedure}
-          onChange={(e) => setNewProcedure(normalizeDetail(e.target.value))}
-          placeholder="Add new surgical procedure"
-          className="max-w-sm"
-        />
-        <Button type="button" variant="outline" onClick={addNewProcedureToLibrary}>
-          Add New Surgical Procedure
-        </Button>
+        <Dialog open={isAddProcedureDialogOpen} onOpenChange={setIsAddProcedureDialogOpen}>
+          <Button type="button" variant="outline" onClick={() => setIsAddProcedureDialogOpen(true)}>
+            Add New Surgical Procedure
+          </Button>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Add New Surgical Procedure</DialogTitle>
+              <DialogDescription>Enter the complete procedure name and save it for future referrals.</DialogDescription>
+            </DialogHeader>
+            <Textarea
+              autoFocus
+              rows={8}
+              value={newProcedure}
+              onChange={(e) => setNewProcedure(toUpper(e.target.value))}
+              placeholder="ENTER SURGICAL PROCEDURE"
+            />
+            <DialogFooter>
+              <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
+              <Button type="button" onClick={() => { addNewProcedureToLibrary(); setIsAddProcedureDialogOpen(false); }}>
+                Save Procedure
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -1938,7 +1904,7 @@ function SurgicalProcedureEditor({
                 <Textarea
                   rows={3}
                   value={editingFinding}
-                  onChange={(e) => setEditingFinding(normalizeDetail(e.target.value))}
+                  onChange={(e) => setEditingFinding(toUpper(e.target.value))}
                   placeholder="Write unusual finding or surgeon note"
                 />
               ) : (
@@ -1962,7 +1928,6 @@ function InvestigationEditor({
   const [isOpen, setIsOpen] = useState(false);
   const [testId, setTestId] = useState(INVESTIGATION_TEST_LIBRARY[0]?.id ?? "");
   const [resultsByParameter, setResultsByParameter] = useState<Record<string, string>>({});
-  const [reportAttached, setReportAttached] = useState(false);
   const [queuedInvestigations, setQueuedInvestigations] = useState<InvestigationRecord[]>([]);
   const [customLibrary, setCustomLibrary] = useState<InvestigationTestTemplate[]>([]);
   const [isCustomDialogOpen, setIsCustomDialogOpen] = useState(false);
@@ -2033,7 +1998,7 @@ function InvestigationEditor({
       if (!key) return;
       if (!uniqueByName.has(key)) uniqueByName.set(key, item);
     });
-    return Array.from(uniqueByName.values());
+    return Array.from(uniqueByName.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [labLibrary, customLibrary]);
 
   useEffect(() => {
@@ -2054,7 +2019,6 @@ function InvestigationEditor({
   useEffect(() => {
     if (!selectedTest) {
       setResultsByParameter({});
-      setReportAttached(false);
       return;
     }
 
@@ -2063,7 +2027,6 @@ function InvestigationEditor({
       next[parameter.id] = "";
     });
     setResultsByParameter(next);
-    setReportAttached(false);
   }, [selectedTest]);
 
   const buildInvestigationRecord = (): InvestigationRecord | null => {
@@ -2072,10 +2035,10 @@ function InvestigationEditor({
       id: createId(),
       testId: selectedTest.id,
       testName: selectedTest.name,
-      reportAttached,
+      reportAttached: false,
       parameters: selectedTest.parameters.map((parameter) => ({
         ...parameter,
-        result: reportAttached ? "" : (resultsByParameter[parameter.id] ?? "").trim(),
+        result: (resultsByParameter[parameter.id] ?? "").trim().toUpperCase(),
       })),
     };
   };
@@ -2092,7 +2055,6 @@ function InvestigationEditor({
         next[parameter.id] = "";
       });
       setResultsByParameter(next);
-      setReportAttached(false);
     }
   };
 
@@ -2171,19 +2133,6 @@ function InvestigationEditor({
 
   const removeInvestigation = (id: string) => {
     onChange(value.filter((item) => item.id !== id));
-  };
-
-  const updateReportAttached = (id: string, checked: boolean) => {
-    onChange(
-      value.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              reportAttached: checked,
-            }
-          : item,
-      ),
-    );
   };
 
   const addAllReportsAttached = () => {
@@ -2332,20 +2281,12 @@ function InvestigationEditor({
               </Select>
             </div>
 
-            <div className="flex items-center gap-2 rounded-xl border border-border/70 p-3">
-              <Checkbox
-                checked={reportAttached}
-                onCheckedChange={(checked) => setReportAttached(Boolean(checked))}
-              />
-              <p className="text-sm text-foreground">Report attached</p>
-            </div>
-
             {queuedInvestigations.length > 0 && (
               <div className="space-y-2 rounded-xl border border-border/70 p-3">
                 <p className="text-xs font-medium text-muted-foreground">Queued tests ({queuedInvestigations.length})</p>
                 <div className="space-y-1 text-xs text-muted-foreground">
                   {queuedInvestigations.map((item) => (
-                    <p key={item.id}>{item.testName}{item.reportAttached ? " (Report attached)" : ""}</p>
+                    <p key={item.id}>{item.testName}</p>
                   ))}
                 </div>
               </div>
@@ -2354,11 +2295,6 @@ function InvestigationEditor({
             {selectedTest && (
               <div className="space-y-2 rounded-xl border border-border/70 p-3">
                 <p className="text-xs font-medium text-muted-foreground">Parameters</p>
-                {reportAttached && (
-                  <p className="text-xs text-muted-foreground">
-                    Manual parameter entry skipped because report is attached.
-                  </p>
-                )}
                 <div className="space-y-2">
                   {selectedTest.parameters.map((parameter) => (
                     <div key={parameter.id} className="grid gap-2 sm:grid-cols-3">
@@ -2369,11 +2305,10 @@ function InvestigationEditor({
                       </div>
                       <Input
                         value={resultsByParameter[parameter.id] ?? ""}
-                        disabled={reportAttached}
                         onChange={(e) =>
                           setResultsByParameter((prev) => ({
                             ...prev,
-                            [parameter.id]: normalizeDetail(e.target.value),
+                            [parameter.id]: toUpper(e.target.value),
                           }))
                         }
                         placeholder="Enter result"
@@ -2419,18 +2354,7 @@ function InvestigationEditor({
               </div>
               {investigation.testId === ALL_REPORTS_ATTACHED_TEST_ID ? (
                 <p className="mb-1 text-xs text-muted-foreground">This will print as: ALL REPORTS ATTACHED</p>
-              ) : (
-                <label className="mb-1 inline-flex items-center gap-2 text-xs text-muted-foreground">
-                  <Checkbox
-                    checked={investigation.reportAttached}
-                    onCheckedChange={(checked) => updateReportAttached(investigation.id, Boolean(checked))}
-                  />
-                  Report attached
-                </label>
-              )}
-              {investigation.reportAttached && investigation.testId !== ALL_REPORTS_ATTACHED_TEST_ID && (
-                <p className="mb-1 text-xs text-muted-foreground">Report attached</p>
-              )}
+              ) : null}
               <div className="space-y-1 text-muted-foreground">
                 {investigation.parameters
                   .filter((parameter) => parameter.result.trim().length > 0)
@@ -2456,6 +2380,7 @@ function SmartMultiPicker({
   onChange,
   persistKey,
   addLabel,
+  disabled = false,
 }: {
   title: string;
   allItems: string[];
@@ -2463,10 +2388,12 @@ function SmartMultiPicker({
   onChange: (next: string[]) => void;
   persistKey?: string;
   addLabel?: string;
+  disabled?: boolean;
 }) {
-  const [term, setTerm] = useState("");
+  const [selectedItem, setSelectedItem] = useState("");
   const [customItem, setCustomItem] = useState("");
   const [storedItems, setStoredItems] = useState<string[]>([]);
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
 
   useEffect(() => {
     if (!persistKey || typeof window === "undefined") return;
@@ -2481,25 +2408,30 @@ function SmartMultiPicker({
   }, [persistKey]);
 
   const mergedItems = useMemo(
-    () => Array.from(new Set([...allItems, ...storedItems])),
+    () => Array.from(new Set([...allItems, ...storedItems])).sort((a, b) => a.localeCompare(b)),
     [allItems, storedItems],
   );
 
-  const normalized = term.trim().toLowerCase();
-  const visibleItems = mergedItems.filter((item) => item.toLowerCase().includes(normalized));
-
   const toggle = (item: string) => {
-    if (value.includes(item)) {
-      onChange(value.filter((v) => v !== item));
+    const normalizedItem = toUpper(item);
+    const normalizedValue = value.map(toUpper);
+    if (normalizedValue.includes(normalizedItem)) {
+      onChange(normalizedValue.filter((v) => v !== normalizedItem));
       return;
     }
-    onChange([...value, item]);
+    onChange([...normalizedValue, normalizedItem]);
+  };
+
+  const addSelectedItem = () => {
+    if (!selectedItem) return;
+    toggle(selectedItem);
+    setSelectedItem("");
   };
 
   const addCustomItem = () => {
-    const next = normalizeDetail(customItem.trim());
+    const next = toUpper(normalizeDetail(customItem.trim()));
     if (!next) return;
-    if (!value.includes(next)) onChange([...value, next]);
+    if (!value.map(toUpper).includes(next)) onChange([...value.map(toUpper), next]);
 
     if (persistKey && typeof window !== "undefined") {
       const nextStored = Array.from(new Set([...storedItems, next]));
@@ -2528,48 +2460,51 @@ function SmartMultiPicker({
         <p className="text-sm font-medium">{title}</p>
         <Badge variant="secondary">{value.length} selected</Badge>
       </div>
-      <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder={`Search ${title.toLowerCase()}`} />
-      {addLabel && (
-        <div className="flex items-center gap-2">
-          <Input
-            value={customItem}
-            onChange={(e) => setCustomItem(normalizeDetail(e.target.value))}
-            placeholder="Enter new item"
-          />
-          <Button type="button" variant="secondary" className="shrink-0" onClick={addCustomItem}>
-            {addLabel}
-          </Button>
-        </div>
-      )}
-      <div className="max-h-40 space-y-1 overflow-auto pr-1">
-        {visibleItems.map((item) => (
-          <div key={item} className="flex items-center gap-2">
-            <button
-              type="button"
-              className="flex w-full items-center justify-between rounded-lg bg-muted/40 px-2 py-1 text-left text-xs hover:bg-muted"
-              onClick={() => toggle(item)}
-            >
-              <span>{item}</span>
-              {value.includes(item) ? <span className="text-primary">Selected</span> : <span className="text-muted-foreground">Add</span>}
-            </button>
-            {persistKey && storedItems.includes(item) && (
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => deleteCustomDiagnosis(item)}
-              >
-                Delete
-              </Button>
-            )}
-          </div>
-        ))}
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+        <Select value={selectedItem} onValueChange={setSelectedItem} disabled={disabled}>
+          <SelectTrigger>
+            <SelectValue placeholder={`Select ${title.toLowerCase()}`} />
+          </SelectTrigger>
+          <SelectContent>
+            {mergedItems.map((item) => (
+              <SelectItem key={item} value={item}>{toUpper(item)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button type="button" variant="secondary" onClick={addSelectedItem} disabled={disabled || !selectedItem}>
+          Add
+        </Button>
       </div>
+      {addLabel && (
+        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+          <DialogTrigger asChild>
+            <Button type="button" variant="outline" disabled={disabled}>Add New {title}</Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add New {title}</DialogTitle>
+              <DialogDescription>Save an option for use in future referrals.</DialogDescription>
+            </DialogHeader>
+            <Textarea
+              autoFocus
+              rows={4}
+              value={customItem}
+              onChange={(e) => setCustomItem(toUpper(e.target.value))}
+              placeholder={`ENTER ${title.toUpperCase()}`}
+            />
+            <DialogFooter>
+              <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
+              <Button type="button" onClick={() => { addCustomItem(); setIsAddDialogOpen(false); }} disabled={!customItem.trim()}>
+                Save and Add
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {value.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {value.map((item) => (
-            <Badge key={item} variant="outline" className="cursor-pointer" onClick={() => toggle(item)}>
+            <Badge key={item} variant="outline" className={disabled ? "" : "cursor-pointer"} onClick={() => !disabled && toggle(item)}>
               {item}
             </Badge>
           ))}
@@ -2645,7 +2580,15 @@ function DoctorPicker({
     try {
       const parsed = JSON.parse(window.localStorage.getItem(DOCTOR_LIBRARY_KEY) || "null") as DoctorProfile[] | null;
       if (Array.isArray(parsed) && parsed.length > 0) {
-        setDirectory(parsed.filter((doctor) => doctor?.id && doctor?.name));
+        setDirectory(
+          parsed
+            .filter((doctor) => doctor?.id && doctor?.name)
+            .map((doctor) =>
+              doctor.id === DEFAULT_DOCTOR_PROFILE.id || doctor.name.toUpperCase().includes("ARCHANA TIWARI PANDEY")
+                ? DEFAULT_DOCTOR_PROFILE
+                : doctor,
+            ),
+        );
       }
     } catch {
       // Ignore malformed local directory data.

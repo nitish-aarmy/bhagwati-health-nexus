@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, FlaskConical, IndianRupee, PhoneCall, Users } from "lucide-react";
+import { CalendarDays, FileText, FlaskConical, IndianRupee, PhoneCall, Users } from "lucide-react";
 
 import { PageHeader } from "@/components/AppShell";
 import { StatCard, EmptyState } from "@/components/StatCard";
@@ -10,6 +10,7 @@ import { formatCurrency } from "@/lib/audit";
 import { appointmentsQuery, followUpsQuery, invoicesQuery, labOrdersQuery, patientsQuery } from "@/lib/queries";
 import { primaryRoleLabel } from "@/lib/roles";
 import { guardModuleAccess } from "@/lib/route-guards";
+import type { DischargeSummaryQueueItem } from "@/features/referral-summary/types";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   beforeLoad: guardModuleAccess("dashboard"),
@@ -42,6 +43,17 @@ function DashboardPage() {
   const dueFollowUps = (followUps.data ?? []).filter(
     (f) => !f.is_done && f.due_date <= new Date().toISOString().slice(0, 10),
   );
+  const summaryQueue: DischargeSummaryQueueItem[] = (() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem("bhagwati:discharge-summary-queue") || "[]");
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is DischargeSummaryQueueItem => Boolean(item?.patientName && item?.preparedAt))
+        : [];
+    } catch {
+      return [];
+    }
+  })();
 
   return (
     <div>
@@ -99,6 +111,27 @@ function DashboardPage() {
           )}
         </section>
       </div>
+
+      <section className="neo mt-4 p-5">
+        <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-semibold">
+          <FileText className="size-4 text-primary" /> Discharge Summary Queue
+        </h2>
+        {summaryQueue.length === 0 ? (
+          <EmptyState title="No summaries prepared" description="Saved discharge summaries will appear here by date and time." />
+        ) : (
+          <ul className="space-y-2">
+            {summaryQueue.sort((a, b) => b.preparedAt.localeCompare(a.preparedAt)).slice(0, 12).map((item) => (
+              <li key={item.id} className="flex items-center justify-between rounded-xl bg-muted/40 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{item.patientName}</p>
+                  <p className="text-xs text-muted-foreground">{item.summaryId || "SUMMARY ID PENDING"} · {new Date(item.preparedAt).toLocaleString()}</p>
+                </div>
+                <Badge variant={item.status === "draft" ? "outline" : "secondary"}>{item.status.toUpperCase()}</Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section className="neo mt-4 p-5">
         <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-semibold">

@@ -102,7 +102,7 @@ function seedDatabase(): LocalDb {
       },
     ],
     session_user_id: null,
-    counters: { uhid: 1001, invoice: 1, audit: 1 },
+    counters: { uhid: 510001, invoice: 1, audit: 1 },
     tables: {
       profiles: [
         {
@@ -207,7 +207,7 @@ function normalizeDb(raw: Partial<LocalDb>): LocalDb {
     auth_users: Array.isArray(raw.auth_users) ? raw.auth_users : [],
     session_user_id: raw.session_user_id ?? null,
     counters: {
-      uhid: Number(raw.counters?.uhid ?? 1001),
+      uhid: Math.max(Number(raw.counters?.uhid ?? 510001), 510001),
       invoice: Number(raw.counters?.invoice ?? 1),
       audit: Number(raw.counters?.audit ?? 1),
     },
@@ -307,10 +307,9 @@ function attachPatientRefs(table: string, rows: AnyRecord[]) {
 }
 
 function ensurePatientUhid(db: LocalDb): string {
-  const value = db.counters.uhid;
-  db.counters.uhid += 1;
-  const padded = String(value).padStart(6, "0");
-  return `BH-${new Date().getFullYear().toString().slice(-2)}-${padded}`;
+  const value = Math.max(db.counters.uhid, 510001);
+  db.counters.uhid = value + 1;
+  return `BH${String(value).padStart(6, "0")}`;
 }
 
 function ensureInvoiceNumber(db: LocalDb): string {

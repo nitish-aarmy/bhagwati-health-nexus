@@ -17,13 +17,14 @@ export const EMPTY_MEDICATION_ROW: MedicationRow = {
   medicineType: "TAB",
   strength: "",
   dose: "",
-  morning: true,
-  afternoon: false,
-  night: true,
+  morning: false,
+  afternoon: true,
+  night: false,
   tds: false,
   hs: false,
-  foodTiming: "after_meal",
-  durationDays: 5,
+  sos: false,
+  foodTiming: "none",
+  durationDays: 0,
   specialInstruction: "",
 };
 
@@ -33,10 +34,11 @@ export const createEmptyDraft = (): ReferralDraft => ({
   summaryMode: "discharge_summary",
   admissionDate: "",
   dischargeDate: "",
-  doctorName: "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO, CONSULTANT GYNECOLOGIST & OBSTETRICIAN",
+  doctorName: "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO",
   doctors: [],
   chiefComplaints: [],
   patientHistory: "",
+  allergies: "",
   diagnosis: [],
   treatmentGiven: [],
   investigations: [],
@@ -54,11 +56,13 @@ export const createEmptyDraft = (): ReferralDraft => ({
   transferMode: "Ambulance",
   referralSummary: "",
   dischargedToHome: false,
-  patientStatusDuringDischarge: "",
+  dischargedWithoutConsent: false,
+  patientConditionDuringDischarge: "",
   provisionalDiagnosisText: "",
   followUpDays: 7,
   customFollowUpDays: 0,
   medication: [{ ...EMPTY_MEDICATION_ROW }],
+  savedMedicationEntries: [],
   // Leave empty so server/client render the same initial value; client will populate when saving.
   updatedAt: "",
 });
@@ -105,18 +109,25 @@ function readDraftFromStorage(key: string): ReferralDraft | null {
           : "discharge_summary",
       admissionDate: parsed.admissionDate ?? "",
       dischargeDate: parsed.dischargeDate ?? "",
-      doctorName: parsed.doctorName ?? "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO, CONSULTANT GYNECOLOGIST & OBSTETRICIAN",
+      doctorName: String(parsed.doctorName ?? "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO").split(", CONSULTANT")[0],
       doctors: Array.isArray(parsed.doctors)
-        ? parsed.doctors.filter((doctor): doctor is DoctorProfile => Boolean(doctor?.id && doctor?.name)).map((doctor) => ({
-            id: doctor.id,
-            name: doctor.name,
-            degree: doctor.degree ?? "",
-            details: doctor.details ?? "",
-          }))
+        ? parsed.doctors.filter((doctor): doctor is DoctorProfile => Boolean(doctor?.id && doctor?.name)).map((doctor) => {
+            const isDefaultDoctor = doctor.name.toUpperCase().includes("ARCHANA TIWARI PANDEY");
+            return isDefaultDoctor
+              ? { id: "default-archana-tiwari-pandey", name: "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO", degree: "", details: "" }
+              : {
+                  id: doctor.id,
+                  name: doctor.name,
+                  degree: doctor.degree ?? "",
+                  details: doctor.details ?? "",
+                };
+          })
         : [],
       patientHistory: String(parsed.patientHistory ?? "").toUpperCase(),
+      allergies: String(parsed.allergies ?? "").toUpperCase(),
       dischargedToHome: Boolean(parsed.dischargedToHome),
-      patientStatusDuringDischarge: String(parsed.patientStatusDuringDischarge ?? "").toUpperCase(),
+      dischargedWithoutConsent: Boolean(parsed.dischargedWithoutConsent),
+      patientConditionDuringDischarge: String(parsed.patientConditionDuringDischarge ?? "").toUpperCase(),
       investigations: normalizedInvestigations,
       surgicalProcedures: Array.isArray(parsed.surgicalProcedures)
         ? parsed.surgicalProcedures.map((entry) => ({
@@ -135,11 +146,31 @@ function readDraftFromStorage(key: string): ReferralDraft | null {
                   ? "empty_stomach"
                   : item.foodTiming === "after_food"
                     ? "after_meal"
-                    : (item.foodTiming ?? "after_meal"),
+                    : item.foodTiming === "sos"
+                      ? "none"
+                      : (item.foodTiming ?? "none"),
               tds: Boolean(item.tds),
               hs: Boolean(item.hs),
+              sos: item.foodTiming === "sos" ? true : Boolean(item.sos),
             }))
           : [{ ...EMPTY_MEDICATION_ROW, id: createId() }],
+      savedMedicationEntries: Array.isArray(parsed.savedMedicationEntries)
+        ? parsed.savedMedicationEntries.map((item) => ({
+            ...item,
+            medicineType: item.medicineType ?? "TAB",
+            foodTiming:
+              item.foodTiming === "before_food"
+                ? "empty_stomach"
+                : item.foodTiming === "after_food"
+                  ? "after_meal"
+                  : item.foodTiming === "sos"
+                    ? "none"
+                    : (item.foodTiming ?? "none"),
+            tds: Boolean(item.tds),
+            hs: Boolean(item.hs),
+            sos: item.foodTiming === "sos" ? true : Boolean(item.sos),
+          }))
+        : [],
       provisionalDiagnosisText: String(parsed.provisionalDiagnosisText ?? "").toUpperCase(),
     };
     return normalized;
