@@ -6,7 +6,7 @@ export type FollowUpPreset = 3 | 5 | 7 | 10 | 15 | 30;
 export type MedicationRow = {
   id: string;
   medicineName: string;
-  medicineType?: "TAB" | "CAPSULE" | "SYP" | "INJ" | "IV" | "FLUID" | "OINTMENT";
+  medicineType?: "TAB" | "CAPSULE" | "SYP" | "INJ" | "IV" | "FLUID" | "OINTMENT" | "OIL";
   strength: string;
   dose: string;
   morning: boolean;
@@ -53,6 +53,7 @@ export type DoctorProfile = {
   id: string;
   name: string;
   degree: string;
+  speciality: string;
   details: string;
 };
 
@@ -102,6 +103,7 @@ export type DischargeSummaryQueueItem = {
   preparedAt: string;
   status: "draft" | "saved";
   summaryId: string;
+  draftSnapshot?: Partial<ReferralDraft>;
 };
 
 export type SmartTemplate = {

@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "electron:build": "vite build && electron-builder",
+    "prepare:electron-output": "node scripts/prepare-electron-output.mjs",
+    "electron:build": "vite build && npm run prepare:electron-output && electron-builder --win portable --publish never",
+    "electron:installer": "vite build && npm run prepare:electron-output && electron-builder --win nsis --publish never",
     "electron:dev": "vite dev",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
@@ -73,12 +75,16 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
     "@eslint/js": "^9.32.0",
     "@lovable.dev/vite-tanstack-config": "^2.8.5",
+    "@playwright/test": "^1.63.0",
+    "@testing-library/jest-dom": "^7.0.1",
     "@types/node": "^22.16.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.2.0",
+    "@vitejs/plugin-react-swc": "^4.3.3",
     "electron": "^26.6.10",
     "electron-builder": "^24.13.3",
     "eslint": "^9.32.0",
@@ -87,38 +93,57 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
+    "jsdom": "^29.1.1",
     "localtunnel": "^2.0.2",
     "nitro": "3.0.260603-beta",
     "prettier": "^3.7.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "^8.1.5"
+    "vite": "^8.1.5",
+    "vitest": "^5.0.3"
   },
   "main": "electron/main.cjs",
   "build": {
     "appId": "com.bhagwati.health",
     "productName": "Bhagwati Health Nexus",
     "files": [
-      ".output/**/*",
+      "dist-electron/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "index.html",
+      "src/**/*",
+      "public/**/*",
+      "vite.config.ts",
+      "tsconfig*.json",
+      "tailwind.config.ts",
+      "postcss.config.js",
+      "components.json",
+      "bunfig.toml"
     ],
     "asarUnpack": [
-      ".output/**/*"
+      "dist-electron/**/*",
+      "index.html",
+      "src/**/*",
+      "public/**/*",
+      "vite.config.ts",
+      "tsconfig*.json",
+      "tailwind.config.ts",
+      "postcss.config.js",
+      "components.json",
+      "bunfig.toml"
     ],
     "directories": {
-      "buildResources": "assets"
+      "output": "release",
+      "buildResources": "build-resources"
     },
     "win": {
-        "signAndEditExecutable": false,
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "Bhagwati-Health-Nexus-Portable-${version}.${ext}"
+    },
+    "nsis": {
+      "artifactName": "Bhagwati-Health-Nexus-Setup-${version}.${ext}"
     }
   },
   "devDependenciesExtras": {

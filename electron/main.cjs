@@ -2,59 +2,187 @@ const { app, BrowserWindow } = require('electron')
 const http = require('http')
 const fs = require('fs/promises')
 const path = require('path')
+const { spawn } = require('child_process')
 const { pathToFileURL } = require('url')
+const { resolveAppOutputRoot } = require('./runtime-paths.cjs')
+
+let viteProcess = null
+let localServer = null
+
+function resolveProjectSourceRoot() {
+  const projectRoot = resolveAppOutputRoot({
+    appIsPackaged: app.isPackaged,
+    projectRoot: path.join(__dirname, '..'),
+    resourcesPath: process.resourcesPath,
+  })
+
+  return path.join(projectRoot, 'src')
+}
+
+function stopViteServer() {
+  if (viteProcess && !viteProcess.killed) {
+    viteProcess.kill('SIGTERM')
+    viteProcess = null
+  }
+}
+
+async function startViteDevServer() {
+  const projectRoot = resolveAppOutputRoot()
+  const port = 4173
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.platform === 'win32' ? 'npx.cmd' : 'npx',
+      ['vite', 'dev', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
+      {
+        cwd: projectRoot,
+        env: {
+          ...process.env,
+          BROWSER: 'none',
+          FORCE_COLOR: '0',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+
+    viteProcess = child
+    let settled = false
+
+    const finish = (callback, value) => {
+      if (!settled) {
+        settled = true
+        callback(value)
+      }
+    }
+
+    const handleOutput = (chunk) => {
+      const text = chunk.toString()
+      process.stdout.write(`[vite] ${text}`)
+      const match = text.match(/https?:\/\/127\.0\.0\.1:(\d+)/i) || text.match(/https?:\/\/localhost:(\d+)/i)
+      if (match) {
+        finish(resolve, Number(match[1]))
+      }
+    }
+
+    child.stdout.on('data', handleOutput)
+    child.stderr.on('data', handleOutput)
+
+    child.on('error', (error) => {
+      finish(reject, error)
+    })
+
+    child.on('exit', (code) => {
+      if (!settled && code !== 0) {
+        finish(reject, new Error(`Vite dev server exited with code ${code}`))
+      }
+    })
+  })
+}
 
 async function startLocalServer() {
-  const serverModulePath = path.join(
-    process.resourcesPath,
-    'app.asar.unpacked',
-    '.output',
-    'server',
-    'index.mjs',
-  )
+  const outputRoot = resolveAppOutputRoot({
+    appIsPackaged: app.isPackaged,
+    projectRoot: path.join(__dirname, '..'),
+    resourcesPath: process.resourcesPath,
+  })
+  const appRoot = require('fs').existsSync(path.join(outputRoot, 'src')) ? outputRoot : path.dirname(outputRoot)
+  const serverModuleCandidates = [
+    path.join(outputRoot, 'server', 'index.mjs'),
+    path.join(outputRoot, 'dist-electron', 'server', 'index.mjs'),
+    path.join(outputRoot, '.output', 'server', 'index.mjs'),
+    path.join(outputRoot, '..', 'app.asar.unpacked', 'dist-electron', 'server', 'index.mjs'),
+    path.join(outputRoot, '..', 'app.asar.unpacked', 'server', 'index.mjs'),
+    path.join(outputRoot, '..', 'app.asar', 'dist-electron', 'server', 'index.mjs'),
+  ].filter((candidate) => require('fs').existsSync(candidate))
+  const serverModulePath = serverModuleCandidates[0]
+  if (!serverModulePath) {
+    throw new Error(`Unable to locate Nitro server bundle in packaged app output: ${outputRoot}`)
+  }
   const serverModule = await import(pathToFileURL(serverModulePath).href)
   const fetchHandler = serverModule.default.fetch.bind(serverModule.default)
-  const publicRoot = path.join(process.resourcesPath, 'app.asar.unpacked', '.output', 'public')
+  const publicRoot = require('fs').existsSync(path.join(outputRoot, 'public'))
+    ? path.join(outputRoot, 'public')
+    : require('fs').existsSync(path.join(outputRoot, '.output', 'public'))
+      ? path.join(outputRoot, '.output', 'public')
+      : path.join(outputRoot, 'dist-electron', 'public')
 
-  async function servePublicAsset(request, response) {
-    if (request.method !== 'GET' && request.method !== 'HEAD') return false
+  async function serveAsset(request) {
+    if (request.method !== 'GET' && request.method !== 'HEAD') return null
 
     const pathname = new URL(request.url || '/', 'http://127.0.0.1').pathname
-    if (pathname === '/' || pathname.includes('..')) return false
+    if (pathname.includes('..')) return null
+    if (pathname.startsWith('/src/') || pathname.startsWith('/@')) return null
 
-    const assetPath = path.resolve(publicRoot, `.${pathname}`)
-    if (assetPath !== publicRoot && !assetPath.startsWith(`${publicRoot}${path.sep}`)) return false
+    const candidateRoots = [publicRoot, outputRoot]
+    const assetCandidates = []
 
-    try {
-      const asset = await fs.readFile(assetPath)
-      const extension = path.extname(assetPath).toLowerCase()
-      const contentTypes = {
-        '.css': 'text/css; charset=utf-8',
-        '.html': 'text/html; charset=utf-8',
-        '.js': 'text/javascript; charset=utf-8',
-        '.json': 'application/json; charset=utf-8',
-        '.map': 'application/json; charset=utf-8',
-        '.png': 'image/png',
-        '.svg': 'image/svg+xml',
-        '.woff': 'font/woff',
-        '.woff2': 'font/woff2',
+    if (pathname !== '/') {
+      const relativePath = pathname.replace(/^\/+/, '')
+      for (const candidateRoot of candidateRoots) {
+        const candidate = path.resolve(candidateRoot, relativePath)
+        const safeBase = path.resolve(candidateRoot)
+        if (candidate.startsWith(safeBase) && candidate !== safeBase) {
+          assetCandidates.push(candidate)
+        }
       }
-      response.writeHead(200, {
-        'content-type': contentTypes[extension] || 'application/octet-stream',
-        'cache-control': 'no-cache',
-      })
-      if (request.method === 'HEAD') response.end()
-      else response.end(asset)
-      return true
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-      return false
     }
+
+    for (const assetPath of assetCandidates) {
+      try {
+        const asset = await fs.readFile(assetPath)
+        const extension = path.extname(assetPath).toLowerCase()
+        const contentTypes = {
+          '.css': 'text/css; charset=utf-8',
+          '.html': 'text/html; charset=utf-8',
+          '.js': 'text/javascript; charset=utf-8',
+          '.mjs': 'text/javascript; charset=utf-8',
+          '.ts': 'text/javascript; charset=utf-8',
+          '.tsx': 'text/javascript; charset=utf-8',
+          '.json': 'application/json; charset=utf-8',
+          '.map': 'application/json; charset=utf-8',
+          '.png': 'image/png',
+          '.svg': 'image/svg+xml',
+          '.woff': 'font/woff',
+          '.woff2': 'font/woff2',
+        }
+        return new Response(asset, {
+          status: 200,
+          headers: {
+            'content-type': contentTypes[extension] || 'application/octet-stream',
+            'cache-control': 'no-cache',
+          },
+        })
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+    }
+
+    return null
+  }
+
+  const env = {
+    ASSETS: {
+      async fetch(request) {
+        return serveAsset(request)
+      },
+    },
   }
 
   const server = http.createServer(async (request, response) => {
     try {
-      if (await servePublicAsset(request, response)) return
+      const pathname = new URL(request.url || '/', 'http://127.0.0.1').pathname
+      if (pathname !== '/' && pathname.includes('..')) {
+        response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+        response.end('Invalid asset request.')
+        return
+      }
+
+      const assetResponse = await serveAsset(request)
+      if (assetResponse) {
+        response.writeHead(assetResponse.status, Object.fromEntries(assetResponse.headers))
+        response.end(Buffer.from(await assetResponse.arrayBuffer()))
+        return
+      }
 
       const host = request.headers.host || '127.0.0.1'
       const chunks = []
@@ -71,8 +199,10 @@ async function startLocalServer() {
           headers,
           body: request.method === 'GET' || request.method === 'HEAD' ? undefined : body,
         }),
-        {},
-        { waitUntil() {} },
+        env,
+        {
+          waitUntil() {},
+        },
       )
 
       console.log(`[server] ${request.method} ${request.url} -> ${webResponse.status}`)
@@ -91,7 +221,18 @@ async function startLocalServer() {
 }
 
 async function createWindow() {
-  const { server, port } = await startLocalServer()
+  let url = 'http://127.0.0.1:4173/'
+
+  if (app.isPackaged) {
+    if (!localServer) {
+      localServer = await startLocalServer()
+    }
+    url = `http://127.0.0.1:${localServer.port}${process.argv.includes('--open-referrals') ? '/referrals' : '/'}`
+  } else {
+    const port = await startViteDevServer()
+    url = `http://127.0.0.1:${port}${process.argv.includes('--open-referrals') ? '/referrals' : '/'}`
+  }
+
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -111,9 +252,18 @@ async function createWindow() {
   win.webContents.on('did-finish-load', () => {
     console.log('[renderer] load finished')
   })
-  win.on('closed', () => server.close())
-  const initialPath = process.argv.includes('--open-referrals') ? '/referrals' : '/'
-  win.loadURL(`http://127.0.0.1:${port}${initialPath}`)
+  win.on('closed', () => {
+    if (localServer) {
+      const closeTarget = localServer.server || localServer
+      if (closeTarget && typeof closeTarget.close === 'function') {
+        closeTarget.close()
+      }
+      localServer = null
+    }
+    stopViteServer()
+  })
+
+  win.loadURL(url)
 }
 
 app.whenReady().then(createWindow).catch((error) => {

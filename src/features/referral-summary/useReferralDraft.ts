@@ -34,7 +34,7 @@ export const createEmptyDraft = (): ReferralDraft => ({
   summaryMode: "discharge_summary",
   admissionDate: "",
   dischargeDate: "",
-  doctorName: "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO",
+  doctorName: "DR SUSHIL KR PANDEY MBBS, MS, DNB(GENERAL SURGERY) REG.NO. JMC/2257",
   doctors: [],
   chiefComplaints: [],
   patientHistory: "",
@@ -109,16 +109,17 @@ function readDraftFromStorage(key: string): ReferralDraft | null {
           : "discharge_summary",
       admissionDate: parsed.admissionDate ?? "",
       dischargeDate: parsed.dischargeDate ?? "",
-      doctorName: String(parsed.doctorName ?? "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO").split(", CONSULTANT")[0],
+      doctorName: String(parsed.doctorName ?? "DR SUSHIL KR PANDEY MBBS, MS, DNB(GENERAL SURGERY) REG.NO. JMC/2257").split(", CONSULTANT")[0],
       doctors: Array.isArray(parsed.doctors)
         ? parsed.doctors.filter((doctor): doctor is DoctorProfile => Boolean(doctor?.id && doctor?.name)).map((doctor) => {
-            const isDefaultDoctor = doctor.name.toUpperCase().includes("ARCHANA TIWARI PANDEY");
+            const isDefaultDoctor = doctor.name.toUpperCase().includes("SUSHIL KR PANDEY");
             return isDefaultDoctor
-              ? { id: "default-archana-tiwari-pandey", name: "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO", degree: "", details: "" }
+              ? { id: "default-sushil-kr-pandey", name: "DR SUSHIL KR PANDEY MBBS, MS, DNB(GENERAL SURGERY) REG.NO. JMC/2257", degree: "", speciality: "GENERAL SURGERY", details: "" }
               : {
                   id: doctor.id,
                   name: doctor.name,
                   degree: doctor.degree ?? "",
+                  speciality: doctor.speciality ?? doctor.details ?? "",
                   details: doctor.details ?? "",
                 };
           })

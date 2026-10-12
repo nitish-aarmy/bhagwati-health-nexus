@@ -36,7 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "laboratory", label: "Laboratory", to: "/laboratory", icon: FlaskConical },
   { key: "billing", label: "Billing", to: "/billing", icon: Receipt },
   { key: "followups", label: "Follow-ups", to: "/followups", icon: BellRing },
-  { key: "referrals", label: "Referrals", to: "/referrals", icon: FileText },
+  { key: "referrals", label: "Discharge", to: "/referrals", icon: FileText },
   { key: "calls", label: "Call Centre", to: "/calls", icon: PhoneCall },
   { key: "administration", label: "Administration", to: "/administration", icon: ShieldCheck },
   { key: "portal", label: "My Health", to: "/portal", icon: Activity },
@@ -94,10 +94,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           open ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
         )}
       >
-        <div className="px-2 py-2">
-          <BrandMark />
-        </div>
-        <nav className="mt-6 space-y-1">
+        <div className="flex h-full flex-col">
+          <div className="px-2 py-2">
+            <BrandMark />
+          </div>
+          <nav className="mt-6 space-y-1 flex-1 overflow-auto">
           {items.map((item) => {
             const active = pathname.startsWith(item.to);
             const Icon = item.icon;
@@ -118,18 +119,21 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Link>
             );
           })}
-        </nav>
+          </nav>
 
-        <div className="absolute inset-x-4 bottom-4 space-y-3">
-          <div className="neo-sm p-3">
-            <p className="truncate text-sm font-semibold">
-              {profile?.full_name || user?.email || "Staff member"}
-            </p>
-            <p className="text-xs text-muted-foreground">{primaryRoleLabel(roles)}</p>
+          <div className="mt-4 pb-4">
+            <div className="neo-sm p-3">
+              <p className="truncate text-sm font-semibold">
+                {profile?.full_name || user?.email || "Staff member"}
+              </p>
+              <p className="text-xs text-muted-foreground">{primaryRoleLabel(roles)}</p>
+            </div>
+            <div className="px-1">
+              <Button variant="ghost" className="w-full justify-start gap-2" onClick={() => void signOut()}>
+                <LogOut className="size-4" /> Sign out
+              </Button>
+            </div>
           </div>
-          <Button variant="ghost" className="w-full justify-start gap-2" onClick={() => void signOut()}>
-            <LogOut className="size-4" /> Sign out
-          </Button>
         </div>
       </aside>
 

@@ -210,7 +210,12 @@ function AuthPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mobile: normalized, otp: result.otp }),
-    });
+    }).catch(() => null);
+
+    if (!smsResponse || smsResponse.status === 404) {
+      toast.warning(`SMS is unavailable in local development. Demo OTP: ${result.otp}`);
+      return;
+    }
 
     const sms = (await smsResponse.json().catch(() => null)) as
       | { ok?: boolean; error?: string; notConfigured?: boolean }

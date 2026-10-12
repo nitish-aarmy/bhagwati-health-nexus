@@ -122,23 +122,22 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
-function RootComponent() {
-  const { queryClient } = Route.useRouteContext();
-  const [isClient, setIsClient] = useState(false);
-
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
-
-  if (!isClient) {
-    return <div className="min-h-screen bg-background" />;
-  }
-
+export function RootContent({
+  queryClient,
+  outletContent,
+}: {
+  queryClient: QueryClient;
+  outletContent?: ReactNode;
+}) {
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      {outletContent ?? <Outlet />}
       <Toaster position="top-right" richColors />
     </QueryClientProvider>
   );
+}
+
+function RootComponent() {
+  const { queryClient } = Route.useRouteContext();
+  return <RootContent queryClient={queryClient} />;
 }

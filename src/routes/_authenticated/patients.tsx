@@ -38,16 +38,67 @@ export const Route = createFileRoute("/_authenticated/patients")({
   component: PatientsPage,
 });
 
+const districtOptions = [
+  "Bokaro",
+  "Chatra",
+  "Deoghar",
+  "Dhanbad",
+  "Dumka",
+  "East Singhbhum",
+  "Garhwa",
+  "Giridih",
+  "Godda",
+  "Gumla",
+  "Hazaribagh",
+  "Jamtara",
+  "Khunti",
+  "Koderma",
+  "Latehar",
+  "Lohardaga",
+  "Pakur",
+  "Palamu",
+  "Ramgarh",
+  "Ranchi",
+  "Sahibganj",
+  "Seraikela Kharsawan",
+  "Simdega",
+  "West Singhbhum",
+];
+
+const guardianRelationOptions = [
+  "Father",
+  "Mother",
+  "Husband",
+  "Wife",
+  "Brother",
+  "Sister",
+  "Guardian",
+  "Other",
+];
+
 const patientSchema = z.object({
-  full_name: z.string().trim().min(2, "Name is required").max(120),
+  first_name: z.string().trim().min(1, "First name is required").max(60),
+  middle_name: z.string().trim().max(60).optional().or(z.literal("")),
+  last_name: z.string().trim().min(1, "Last name is required").max(60),
   phone: z
     .string()
     .trim()
     .regex(/^[0-9+\-\s]{8,15}$/, "Enter a valid phone number"),
+  email: z.string().trim().email("Enter a valid email").optional().or(z.literal("")),
   age: z.coerce.number().int().min(0).max(130).optional(),
+  date_of_birth: z.string().trim().max(20).optional().or(z.literal("")),
   gender: z.string().trim().max(20),
+  guardian_name: z.string().trim().max(120).optional().or(z.literal("")),
+  guardian_relation: z.string().trim().max(40).optional().or(z.literal("")),
+  address_line_1: z.string().trim().max(120).optional().or(z.literal("")),
+  address_line_2: z.string().trim().max(120).optional().or(z.literal("")),
+  locality: z.string().trim().max(120).optional().or(z.literal("")),
+  landmark: z.string().trim().max(120).optional().or(z.literal("")),
+  city: z.string().trim().max(80).optional().or(z.literal("Daltonganj")),
+  district: z.string().trim().max(80).optional().or(z.literal("Palamu")),
+  pincode: z.string().trim().max(12).optional().or(z.literal("")),
+  state: z.string().trim().max(80).optional().or(z.literal("Jharkhand")),
   speciality: z.string().trim().max(100).optional(),
-  address: z.string().trim().max(300).optional(),
   lead_source: z.string().trim().max(80).optional(),
   referring_doctor: z.string().trim().max(120).optional(),
   treating_doctor: z.string().trim().max(120).optional(),
@@ -72,17 +123,57 @@ function PatientsPage() {
       const parsed = patientSchema.safeParse(raw);
       if (!parsed.success) throw new Error(parsed.error.issues[0]!.message);
       const v = parsed.data;
+
+      const fullName = [v.first_name, v.middle_name, v.last_name].filter(Boolean).join(" ");
+      const addressParts = [
+        v.address_line_1,
+        v.address_line_2,
+        v.locality,
+        v.landmark,
+        v.city,
+        v.district,
+        v.pincode,
+        v.state,
+      ].filter(Boolean);
+
+      const existingQuery = await supabase.from("patients").select("uhid");
+      if (existingQuery.error) throw existingQuery.error;
+      const usedIds = new Set((existingQuery.data ?? []).map((row) => String(row.uhid ?? "")));
+      let generatedId = `BH-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+      let suffix = 1;
+      while (usedIds.has(generatedId)) {
+        generatedId = `BH-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}-${suffix}`;
+        suffix += 1;
+      }
+
       const values = {
-        full_name: v.full_name.toUpperCase(),
+        uhid: generatedId,
+        full_name: fullName.toUpperCase(),
+        first_name: v.first_name.trim(),
+        middle_name: v.middle_name?.trim() || null,
+        last_name: v.last_name.trim(),
         phone: v.phone,
+        email: v.email || null,
         gender: (v.gender || "OTHER").toUpperCase(),
         age: v.age ?? null,
+        date_of_birth: v.date_of_birth || null,
+        guardian_name: v.guardian_name || null,
+        guardian_relation: v.guardian_relation || null,
+        address_line_1: v.address_line_1 || null,
+        address_line_2: v.address_line_2 || null,
+        locality: v.locality || null,
+        landmark: v.landmark || null,
+        city: v.city || "Daltonganj",
+        district: v.district || "Palamu",
+        pincode: v.pincode || null,
+        state: v.state || "Jharkhand",
         speciality: v.speciality?.toUpperCase() || null,
-        address: v.address?.toUpperCase() || null,
+        address: addressParts.join(", ") || null,
         lead_source: v.lead_source?.toUpperCase() || null,
         referring_doctor: v.referring_doctor?.toUpperCase() || null,
         treating_doctor: v.treating_doctor?.toUpperCase() || null,
       };
+
       const query = patientId
         ? supabase.from("patients").update(values).eq("id", patientId)
         : supabase.from("patients").insert(values);
@@ -131,11 +222,80 @@ function PatientsPage() {
                   savePatient.mutate({ form: new FormData(e.currentTarget), patientId: editingPatient?.id });
                 }}
               >
-                <Field name="full_name" label="Full name" required defaultValue={editingPatient?.full_name} />
+                <Field name="first_name" label="First name" required defaultValue={editingPatient?.first_name ?? undefined} />
+                <Field name="middle_name" label="Middle name" defaultValue={editingPatient?.middle_name ?? undefined} />
+                <Field name="last_name" label="Last name" required defaultValue={editingPatient?.last_name ?? undefined} />
                 <Field name="phone" label="Mobile number" required defaultValue={editingPatient?.phone} />
+                <Field name="email" label="Email" type="email" defaultValue={editingPatient?.email ?? undefined} />
+                <Field name="date_of_birth" label="Date of birth" type="date" defaultValue={editingPatient?.date_of_birth ?? undefined} />
                 <Field name="age" label="Age" type="number" defaultValue={editingPatient?.age?.toString()} />
-                <Field name="gender" label="Gender" defaultValue={editingPatient?.gender ?? "FEMALE"} />
-                
+                <div className="space-y-2">
+                  <Label htmlFor="gender">Gender</Label>
+                  <select
+                    id="gender"
+                    name="gender"
+                    defaultValue={(editingPatient?.gender ?? "FEMALE").toUpperCase()}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  >
+                    <option value="FEMALE">Female</option>
+                    <option value="MALE">Male</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+
+                <Field name="guardian_name" label="Guardian name" defaultValue={editingPatient?.guardian_name ?? undefined} />
+                <div className="space-y-2">
+                  <Label htmlFor="guardian_relation">Guardian relation</Label>
+                  <select
+                    id="guardian_relation"
+                    name="guardian_relation"
+                    defaultValue={editingPatient?.guardian_relation ?? "Father"}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  >
+                    <option value="">Select</option>
+                    {guardianRelationOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="address_line_1">Address line 1</Label>
+                  <Input id="address_line_1" name="address_line_1" defaultValue={editingPatient?.address_line_1 ?? undefined} />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="address_line_2">Address line 2</Label>
+                  <Input id="address_line_2" name="address_line_2" defaultValue={editingPatient?.address_line_2 ?? undefined} />
+                </div>
+                <Field name="locality" label="Locality / Village" defaultValue={editingPatient?.locality ?? undefined} />
+                <Field name="landmark" label="Landmark" defaultValue={editingPatient?.landmark ?? undefined} />
+                <Field name="city" label="City" defaultValue={editingPatient?.city ?? "Daltonganj"} />
+                <div className="space-y-2">
+                  <Label htmlFor="district">District</Label>
+                  <select
+                    id="district"
+                    name="district"
+                    defaultValue={editingPatient?.district ?? "Palamu"}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  >
+                    {districtOptions.map((district) => (
+                      <option key={district} value={district}>{district}</option>
+                    ))}
+                  </select>
+                </div>
+                <Field name="pincode" label="Pincode" defaultValue={editingPatient?.pincode ?? undefined} />
+                <div className="space-y-2">
+                  <Label htmlFor="state">State</Label>
+                  <select
+                    id="state"
+                    name="state"
+                    defaultValue={editingPatient?.state ?? "Jharkhand"}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  >
+                    <option value="Jharkhand">Jharkhand</option>
+                  </select>
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="speciality">Speciality</Label>
                   <div className="flex gap-2">
@@ -236,10 +396,6 @@ function PatientsPage() {
 
                 <Field name="lead_source" label="Lead source" placeholder="Walk-in / Referral / Camp" defaultValue={editingPatient?.lead_source ?? undefined} />
                 <Field name="referring_doctor" label="Referring doctor" defaultValue={editingPatient?.referring_doctor ?? undefined} />
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="address">Address</Label>
-                  <Textarea id="address" name="address" rows={2} defaultValue={editingPatient?.address ?? undefined} />
-                </div>
               </form>
               <DialogFooter>
                 <Button type="submit" form="patient-form" disabled={savePatient.isPending}>

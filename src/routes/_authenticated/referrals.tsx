@@ -73,12 +73,13 @@ const DISCHARGE_SUMMARY_QUEUE_KEY = "bhagwati:discharge-summary-queue";
 const SUMMARY_SEQUENCE_KEY = "bhagwati:summary-sequence";
 
 const PRESET_MEDICINE_LIBRARY: MedicineLibraryItem[] = [];
-const MEDICINE_TYPES: MedicationRow["medicineType"][] = ["TAB", "CAP", "SYP", "INJ", "IV", "ML"];
+const MEDICINE_TYPES: MedicationRow["medicineType"][] = ["TAB", "CAP", "SYP", "INJ", "IV", "OINTMENT", "OIL"];
 
 const DEFAULT_DOCTOR_PROFILE: DoctorProfile = {
-  id: "default-archana-tiwari-pandey",
-  name: "DR ARCHANA TIWARI PANDEY, MBBS (HONS) DGO",
+  id: "default-sushil-kr-pandey",
+  name: "DR SUSHIL KR PANDEY MBBS, MS, DNB(GENERAL SURGERY) REG.NO. JMC/2257",
   degree: "",
+  speciality: "GENERAL SURGERY",
   details: "",
 };
 
@@ -104,8 +105,31 @@ function hasText(value?: string) {
   return String(value ?? "").trim().length > 0;
 }
 
-function doctorDisplayName(doctor: DoctorProfile) {
-  return [doctor.name, doctor.degree].filter(hasText).join(", ");
+export function doctorDisplayName(doctor: DoctorProfile) {
+  return [doctor.name, doctor.degree, doctor.speciality || doctor.details, doctor.details].filter((part, index, array) => {
+    const value = hasText(part) ? part.trim() : "";
+    return value.length > 0 && array.indexOf(part) === index;
+  }).join(", ");
+}
+
+function doctorSignatureLines(doctor: DoctorProfile) {
+  const rawName = String(doctor?.name ?? "").trim();
+  const cleanedName = rawName
+    .replace(/\s+(MBBS|MS|MD|MDS|DNB|DM|MCH|FRCS|MRCS|MHA|DGO|BAMS|BHMS|BDS)\b.*$/gi, "")
+    .replace(/\s+REG(?:ISTRATION)?\.?\s*NO\.?\s*.*$/gi, "")
+    .replace(/\s*\([^)]*\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const formattedName = cleanedName
+    ? cleanedName.replace(/\bKR\b/gi, "KUMAR").replace(/\bDR\b/gi, "DR").toUpperCase()
+    : "DR";
+
+  const degreeLine = String(doctor?.degree ?? "").trim();
+  return {
+    nameLine: formattedName,
+    degreeLine: degreeLine ? degreeLine.toUpperCase() : "",
+  };
 }
 
 function joinNonEmpty(items: string[]) {
@@ -126,17 +150,27 @@ function doctorPrintHtml(name: string) {
 }
 
 function doctorPrintRows(doctors: DoctorProfile[], fallbackDoctorName: string) {
-  const printableDoctors = doctors.length > 0 ? doctors : [{ id: "fallback", name: fallbackDoctorName, degree: "", details: "" }];
+  const printableDoctors = doctors.length > 0 ? doctors : [{ id: "fallback", name: fallbackDoctorName, degree: "", speciality: "", details: "" }];
   return printableDoctors
     .map((doctor, index) => {
       const nameParts = String(doctor.name || "-").split(",");
       const name = escapeHtml(nameParts.shift()?.trim() || "-");
-      const doctorDetails = [...nameParts, doctor.degree]
-        .map((detail) => detail.trim())
-        .filter(Boolean)
+      const printedDetails = [doctor.degree, doctor.speciality || doctor.details, doctor.details]
+        .map((detail) => detail?.trim() ?? "")
+        .filter((detail, detailIndex, array) => Boolean(detail) && array.indexOf(detail) === detailIndex)
         .map((detail) => `<div class="doctor-degree">${escapeHtml(detail)}</div>`)
         .join("");
-      return `<div class="label">${index === 0 ? "Treating Doctor" : ""}</div><div class="value doctor-value"><span class="doctor-colon">:</span><div class="doctor-details"><div>${name}</div>${doctorDetails}</div></div>`;
+      const label = index === 0 ? "Treating Doctor" : "Other Doctor";
+      const isFirstRow = index === 0;
+      const rowClass = isFirstRow ? "doctor-full-row" : "";
+      return `
+        <div class="label ${rowClass}">${label}</div>
+        <div class="colon ${rowClass}">:</div>
+        <div class="value doctor-value ${isFirstRow ? "doctor-full-width" : ""}">
+          <span class="doctor-colon">:</span>
+          <div class="doctor-details"><div>${name}</div>${printedDetails}</div>
+        </div>
+      `;
     })
     .join("");
 }
@@ -153,6 +187,42 @@ function financialYear() {
   const now = new Date();
   const startYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
   return `${String(startYear).slice(-2)}-${String(startYear + 1).slice(-2)}`;
+}
+
+export function readSummaryQueue() {
+  if (typeof window === "undefined") return [] as DischargeSummaryQueueItem[];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(DISCHARGE_SUMMARY_QUEUE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is DischargeSummaryQueueItem => Boolean(item?.patientName && item?.preparedAt)) : [];
+  } catch {
+    return [] as DischargeSummaryQueueItem[];
+  }
+}
+
+export function buildSummaryQueueItem({
+  patientId,
+  patientName,
+  summaryMode,
+  status,
+  draft,
+}: {
+  patientId: string;
+  patientName: string;
+  summaryMode: SummaryMode;
+  status: DischargeSummaryQueueItem["status"];
+  draft: Partial<ReferralDraft>;
+}): DischargeSummaryQueueItem {
+  const summaryId = nextSummaryId(summaryMode);
+  return {
+    id: createId(),
+    summaryId,
+    patientId,
+    patientName: toUpper(patientName),
+    summaryMode,
+    preparedAt: new Date().toISOString(),
+    status,
+    draftSnapshot: draft,
+  };
 }
 
 function nextSummaryId(summaryMode: SummaryMode) {
@@ -206,21 +276,46 @@ function foodTimingPrintLabel(value?: string) {
 
 function medicationSchedulePrintBlock(row: MedicationRow) {
   const line1 = `${row.medicineType ? `${row.medicineType} ` : ""}${row.medicineName || "DRUG"}`.trim();
-  const quantityDose = [row.strength?.trim(), row.dose?.trim()].filter(Boolean).join(" ");
+  const foodLabel = foodTimingPrintLabel(row.foodTiming);
+  const doseToken = row.dose?.trim() || "1";
+  const doseLine = [doseToken, row.medicineType || "TAB", foodLabel].filter(Boolean).join(" ");
   const timeParts = [
     row.morning ? "OD" : "",
     row.afternoon ? "BD" : "",
     row.tds ? "TDS" : "",
-    row.night ? "NIGHT" : "",
     row.hs ? "HS" : "",
     row.sos ? "SOS" : "",
   ]
     .filter(Boolean)
     .join(" ");
-  const duration = row.durationDays ? `${row.durationDays} days` : "";
-  const line2 = `${quantityDose || "DOSE"}${timeParts ? ` ${timeParts}` : ""}${duration ? ` for ${duration}` : ""}`;
-  const line3 = foodTimingPrintLabel(row.foodTiming);
-  return `${line1}\n${line2}${line3 ? `\n${line3}` : ""}`;
+  const duration = row.durationDays ? `${row.durationDays} DAYS` : "";
+  const scheduleLine = [timeParts || "", duration ? `FOR ${duration}` : ""].filter(Boolean).join(" ");
+  return `${line1}\n${doseLine}${scheduleLine ? `\n${scheduleLine}` : ""}`;
+}
+
+function getMedicationScheduleLabel(row: MedicationRow) {
+  if (row.morning) return "OD";
+  if (row.afternoon) return "BD";
+  if (row.tds) return "TDS";
+  if (row.hs) return "HS";
+  if (row.sos) return "SOS";
+  return row.dose?.trim() || "Dose";
+}
+
+function applySingleMedicationSchedule(rowId: string, schedule: "OD" | "BD" | "TDS" | "HS" | "SOS", updateMedication: (id: string, patch: Partial<MedicationRow>) => void) {
+  updateMedication(rowId, {
+    morning: schedule === "OD",
+    afternoon: schedule === "BD",
+    tds: schedule === "TDS",
+    hs: schedule === "HS",
+    sos: schedule === "SOS",
+  });
+}
+
+function formatFollowUpAfterLabel(days: number | 0, customDays: number) {
+  const resolvedDays = Number(days) > 0 ? Number(days) : Number(customDays) || 0;
+  if (!resolvedDays) return "";
+  return `FOLLOW UP AFTER ${resolvedDays} DAYS`;
 }
 
 function formatInvestigationRecord(record: InvestigationRecord) {
@@ -293,7 +388,7 @@ function createReferralHtml({
 }) {
   const medicationLines = [...draft.savedMedicationEntries, ...draft.medication]
     .filter((m) => m.medicineName.trim().length > 0)
-    .map(medicationSchedulePrintBlock);
+      .map(medicationSchedulePrintBlock);
 
   const summaryLabel = draft.summaryMode === "referral_summary" ? "REFERRAL SUMMARY" : "DISCHARGE SUMMARY";
   const summaryIdLabel = draft.summaryMode === "referral_summary" ? "Referral ID" : "Discharge ID";
@@ -303,27 +398,27 @@ function createReferralHtml({
   const patientDetailRows = `
     <div class="patient-details-columns">
       <div class="details-grid">
-        <div class="label">${summaryIdLabel}</div><div class="value">: ${escapeHtml(summaryId)}</div>
-        <div class="label">Patient Registration ID</div><div class="value">: ${escapeHtml(patientRegistrationId)}</div>
-        <div class="label">Patient Name</div><div class="value">: ${escapeHtml(patientName || "-")}</div>
-        <div class="label">Age/Sex</div><div class="value">: ${escapeHtml(ageGender || "-")}</div>
+        <div class="label">${summaryIdLabel}</div><div class="colon">:</div><div class="value">${escapeHtml(summaryId)}</div>
+        <div class="label">Patient Registration ID</div><div class="colon">:</div><div class="value">${escapeHtml(patientRegistrationId)}</div>
+        <div class="label">Patient Name</div><div class="colon">:</div><div class="value">${escapeHtml(patientName || "-")}</div>
+        <div class="label">Age/Gender</div><div class="colon">:</div><div class="value">${escapeHtml(ageGender || "-")}</div>
       </div>
       <div class="details-grid">
-        <div class="label">Admission Date</div><div class="value">: ${escapeHtml(hasText(draft.admissionDate) ? formatDateDMY(draft.admissionDate) : "-")}</div>
-        <div class="label">Discharge Date</div><div class="value">: ${escapeHtml(hasText(draft.dischargeDate) ? formatDateDMY(draft.dischargeDate) : "-")}</div>
+        <div class="label">Admission Date</div><div class="colon">:</div><div class="value">${escapeHtml(hasText(draft.admissionDate) ? formatDateDMY(draft.admissionDate) : "-")}</div>
+        <div class="label">Discharge Date</div><div class="colon">:</div><div class="value">${escapeHtml(hasText(draft.dischargeDate) ? formatDateDMY(draft.dischargeDate) : "-")}</div>
         ${doctorPrintRows(draft.doctors, draft.doctorName || "-")}
       </div>
     </div>
   `;
 
   const clinicalPairs: Array<[string, string]> = [];
-  if (draft.chiefComplaints.length > 0) clinicalPairs.push(["Presenting Complaints", joinNonEmpty(draft.chiefComplaints)]);
+  if (draft.chiefComplaints.length > 0) clinicalPairs.push(["Chief Complaints", joinNonEmpty(draft.chiefComplaints)]);
   if (hasText(draft.patientHistory)) clinicalPairs.push(["Past Medical History", draft.patientHistory.toUpperCase()]);
   if (hasText(draft.allergies)) clinicalPairs.push(["Allergies", draft.allergies.toUpperCase()]);
   if (draft.provisionalDiagnosisText && draft.provisionalDiagnosisText.trim().length > 0)
     clinicalPairs.push(["Discharge Diagnosis", draft.provisionalDiagnosisText.toUpperCase()]);
   else if (draft.diagnosis.length > 0) clinicalPairs.push(["Discharge Diagnosis", joinNonEmpty(draft.diagnosis)]);
-  if (draft.investigations.length > 0) clinicalPairs.push(["Investigations", formatInvestigationsForDocument(draft.investigations)]);
+  if (draft.investigations.length > 0) clinicalPairs.push(["IPD Investigations", formatInvestigationsForDocument(draft.investigations)]);
   if (draft.surgicalProcedures.length > 0) clinicalPairs.push(["Surgical Procedure", formatSurgicalProceduresForDocument(draft.surgicalProcedures)]);
   if (draft.treatmentGiven.length > 0) clinicalPairs.push(["Medical Management", joinNonEmpty(draft.treatmentGiven)]);
   const medicalManagementIndex = clinicalPairs.findIndex(([label]) => label === "Medical Management");
@@ -333,7 +428,7 @@ function createReferralHtml({
     ? `
       <div class="details-grid ${className}">
         ${pairs
-          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value">: ${escapeHtml(p[1])}</div>`)
+          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="colon">:</div><div class="value">${escapeHtml(p[1])}</div>`)
           .join("")}
       </div>
     `
@@ -343,6 +438,9 @@ function createReferralHtml({
 
   const summaryRows = hasText(draft.referralSummary) && draft.summaryMode === "referral_summary"
     ? `<h2>Discharge Summary</h2><div class="summary-text">${escapeHtml(draft.referralSummary)}</div>`
+    : "";
+  const doctorCommentsRows = hasText(draft.doctorNotes)
+    ? `<div class="details-grid"><div class="label">Doctor's Comments</div><div class="colon">:</div><div class="value">${escapeHtml(draft.doctorNotes)}</div></div>`
     : "";
 
   const referralPairs: Array<[string, string]> = [];
@@ -357,7 +455,7 @@ function createReferralHtml({
     ? `
       <div class="details-grid">
         ${referralPairs
-          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value">: ${escapeHtml(p[1])}</div>`)
+          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="colon">:</div><div class="value">${escapeHtml(p[1])}</div>`)
           .join("")}
       </div>
     `
@@ -371,13 +469,15 @@ function createReferralHtml({
     ? `
       <div class="details-grid">
         ${dischargePairs
-          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value discharge-value"><span class="doctor-colon">:</span><div class="discharge-details">${escapeHtml(p[1])}</div></div>`)
+          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="colon">:</div><div class="value discharge-value"><div class="discharge-details">${escapeHtml(p[1])}</div></div>`)
           .join("")}
       </div>
     `
     : "";
 
   const advicePairs: Array<[string, string]> = [];
+  const followUpLabelText = formatFollowUpAfterLabel(draft.followUpDays, draft.customFollowUpDays);
+  if (followUpLabelText) advicePairs.push(["Follow Ups After", followUpLabelText]);
   if (draft.dietAdvice.length > 0) advicePairs.push(["Post Operative Precautionary Advice", joinNonEmpty(draft.dietAdvice)]);
   if (draft.dos.length > 0) advicePairs.push(["Do's", joinNonEmpty(draft.dos)]);
   if (draft.donts.length > 0) advicePairs.push(["Don'ts", joinNonEmpty(draft.donts)]);
@@ -386,7 +486,7 @@ function createReferralHtml({
     ? `
       <div class="details-grid">
         ${advicePairs
-          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="value">: ${escapeHtml(p[1])}</div>`)
+          .map((p) => `<div class="label">${escapeHtml(p[0])}</div><div class="colon">:</div><div class="value">${escapeHtml(p[1])}</div>`)
           .join("")}
       </div>
     `
@@ -399,7 +499,7 @@ function createReferralHtml({
       <title>${summaryLabel}</title>
       <style>
         @page { size: A4; margin: 2in 14mm 1in 14mm; }
-        body { font-family: Arial, sans-serif; color: #111; font-size: 11.5px; line-height: 1.35; }
+        body { font-family: Arial, sans-serif; color: #111; font-size: 11.5px; line-height: 1.35; position: relative; min-height: 297mm; }
         h1, h2 { margin: 0; }
         h1 { font-size: 16px; text-align: center; }
         .print-header h1 { grid-column: 2; }
@@ -414,12 +514,25 @@ function createReferralHtml({
         h2 { font-size: 12.5px; margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 3px; }
         .muted { color: #444; }
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin-top: 8px; }
-        .details-grid { display: grid; grid-template-columns: 160px 1fr; gap: 2px 8px; align-items: start; }
-        .flow-columns { column-count: 2; column-gap: 10px; column-fill: auto; height: 185mm; margin-top: 10px; }
-        .flow-columns > * { break-inside: avoid; }
+        .details-grid { display: grid; grid-template-columns: 160px 8px 1fr; gap: 2px 8px; align-items: start; }
+        .details-grid .doctor-full-row {
+          grid-column: 1 / -1;
+        }
+        .details-grid .doctor-full-width {
+          grid-column: 1 / -1;
+          width: 100%;
+          max-width: 100%;
+        }
+        .details-grid .doctor-full-width .doctor-details {
+          width: 100%;
+          max-width: 100%;
+        }
+        .flow-columns { column-count: 2; column-gap: 10px; column-fill: auto; margin-top: 10px; }
+        .flow-columns > * { break-inside: avoid; page-break-inside: avoid; }
+        .flow-columns .wide-panel { column-span: all; }
         .flow-details-grid { margin-top: 0; }
         .patient-details-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .patient-details-columns .details-grid { grid-template-columns: 120px minmax(0, 1fr); }
+        .patient-details-columns .details-grid { grid-template-columns: 120px 8px minmax(0, 1fr); }
         .details-grid .label { font-weight: 700; font-size: 11px; }
         .details-grid .value { font-size: 11px; }
         .summary-text { white-space: pre-line; font-size: 11px; margin-top: 6px; }
@@ -429,12 +542,69 @@ function createReferralHtml({
         ul { margin: 6px 0 0 18px; padding: 0; }
         li { white-space: pre-line; margin-bottom: 5px; }
         .row { margin-top: 5px; }
-        .footer { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+        .footer {
+          position: fixed;
+          left: 12mm;
+          right: 12mm;
+          bottom: 6mm;
+          display: flex;
+          justify-content: center;
+          width: auto;
+          z-index: 1;
+          pointer-events: none;
+        }
+        .footer-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          align-items: end;
+          column-gap: 22px;
+          width: 100%;
+          max-width: 520px;
+          pointer-events: auto;
+        }
+        .footer-cell {
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-end;
+          align-items: stretch;
+          text-align: left;
+          min-width: 0;
+          min-height: 60px;
+          width: 100%;
+        }
         .footer-line { margin: 0; }
-        .footer-label { margin: 0 0 2px 12px; }
-        .footer-underline { margin: 0; white-space: nowrap; }
+        .footer-label { margin: 0 0 3px; font-size: 10px; font-weight: 700; }
+        .footer-underline {
+          margin: 0;
+          width: 100%;
+          min-height: 16px;
+          border-bottom: 1px solid #111;
+        }
+        .signature-name {
+          margin-top: 6px;
+          margin-bottom: 0;
+          font-weight: 700;
+          font-size: 10.5px;
+          white-space: normal;
+          word-break: break-word;
+          max-width: 180px;
+          min-height: 12px;
+        }
+        .signature-degree {
+          margin: 2px 0 0;
+          font-size: 9px;
+          font-weight: 600;
+          letter-spacing: 0.02em;
+          white-space: normal;
+          word-break: break-word;
+          max-width: 180px;
+        }
+        .doctor-signature-block { margin-top: 6px; }
         .hospital-seal { margin-left: 0; }
-        .hospital-seal .footer-label { margin-left: 28px; }
+        .hospital-placeholder {
+          visibility: hidden;
+          pointer-events: none;
+        }
       </style>
     </head>
     <body>
@@ -448,19 +618,26 @@ function createReferralHtml({
 
       <div class="flow-columns">
         ${postManagementRows ? `<div class="panel">${postManagementRows}</div>` : ""}
-        ${medicationLines.length > 0 ? `<div class="panel"><h2>Medications and Advice</h2><ul>${medicationLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul></div>` : ""}
-        ${hasText(draft.doctorNotes) ? `<div class="panel"><h2>Other Advice</h2><div class="summary-text">${escapeHtml(draft.doctorNotes)}</div></div>` : ""}
+        ${medicationLines.length > 0 ? `<div class="panel wide-panel"><h2>Medications and Advice</h2><ul>${medicationLines.map((line) => `<li>${escapeHtml(String(line).toUpperCase())}</li>`).join("")}</ul></div>` : ""}
+        ${doctorCommentsRows ? `<div class="panel wide-panel"><h2>Doctor's Comments</h2>${doctorCommentsRows}</div>` : ""}
         ${draft.summaryMode === "referral_summary" && (referralRows || adviceRows) ? `<div class="panel">${draft.summaryMode === "referral_summary" ? "<h2>Referral Details</h2>" : ""}${referralRows}${adviceRows ? `<h2 style="margin-top: 10px;">Advice</h2>${adviceRows}` : ""}</div>` : ""}
-        ${draft.summaryMode !== "referral_summary" && (dischargeOnlyRows || adviceRows) ? `<div class="panel">${dischargeOnlyRows}${adviceRows ? `<h2 style="margin-top: 10px;">Advice</h2>${adviceRows}` : ""}</div>` : ""}
-        <div class="footer">
-          <div>
+        ${draft.summaryMode !== "referral_summary" && (dischargeOnlyRows || adviceRows) ? `<div class="panel wide-panel">${dischargeOnlyRows}${adviceRows ? `<h2 style="margin-top: 10px;">Advice</h2>${adviceRows}` : ""}</div>` : ""}
+      </div>
+      <div class="footer">
+        <div class="footer-grid">
+          <div class="footer-cell doctor-signature-block">
             <p class="footer-label">Doctor Signature</p>
-            <p class="footer-underline">____________________</p>
-            <p class="signature-name">${doctorPrintHtml(treatingDoctors[0] || "-")}</p>
+            <p class="footer-underline"></p>
+            ${(() => {
+              const doctor = draft.doctors[0] || { name: draft.doctorName || "-", degree: "", speciality: "", details: "" };
+              const signature = doctorSignatureLines(doctor);
+              return `<p class="signature-name">${escapeHtml(signature.nameLine)}</p>${signature.degreeLine ? `<p class="signature-degree">${escapeHtml(signature.degreeLine)}</p>` : ""}`;
+            })()}
           </div>
-          <div class="hospital-seal">
+          <div class="footer-cell hospital-seal">
             <p class="footer-label">Hospital Seal</p>
-            <p class="footer-underline">____________________</p>
+            <p class="footer-underline"></p>
+            <p class="signature-name hospital-placeholder" aria-hidden="true">&nbsp;</p>
           </div>
         </div>
       </div>
@@ -490,14 +667,38 @@ function ReferralsPage() {
   const [newMedicineType, setNewMedicineType] = useState<NonNullable<MedicationRow["medicineType"]>>("TAB");
   const [newMedicineName, setNewMedicineName] = useState("");
   const [isAddMedicineDialogOpen, setIsAddMedicineDialogOpen] = useState(false);
-  const [selectedSavedMedicineIdLocal, setSelectedSavedMedicineIdLocal] = useState("");
   const [medicineSectionRefreshKey, setMedicineSectionRefreshKey] = useState(0);
   const [savedMedicationIds, setSavedMedicationIds] = useState<string[]>([]);
+  const [savedSummaryDialogOpen, setSavedSummaryDialogOpen] = useState(false);
+  const [savedSummaryItems, setSavedSummaryItems] = useState<DischargeSummaryQueueItem[]>([]);
 
   const patients = useQuery(patientsQuery(search));
+  const filteredPatients = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return patients.data ?? [];
+
+    return (patients.data ?? []).filter((patient) => {
+      const searchableText = [
+        patient.first_name,
+        patient.last_name,
+        patient.full_name,
+        patient.locality,
+        patient.city,
+        patient.phone,
+        patient.email,
+        patient.uhid,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(term);
+    });
+  }, [patients.data, search]);
+
   const selectedPatient = useMemo(
-    () => (patients.data ?? []).find((p) => p.id === patientId),
-    [patientId, patients.data],
+    () => filteredPatients.find((p) => p.id === patientId) ?? (patients.data ?? []).find((p) => p.id === patientId),
+    [patientId, filteredPatients, patients.data],
   );
 
   const { draft, setDraft, lastSavedAt } = useReferralDraft(patientId);
@@ -506,7 +707,7 @@ function ReferralsPage() {
     if (draft.doctors.length > 0 || !draft.doctorName) return;
     setDraft((prev) => ({
       ...prev,
-      doctors: [{ id: createId(), name: toUpper(prev.doctorName), degree: "", details: "" }],
+      doctors: [{ id: createId(), name: toUpper(prev.doctorName), degree: "", speciality: "", details: "" }],
     }));
   }, [draft.doctorName, draft.doctors.length, setDraft]);
 
@@ -844,23 +1045,56 @@ function ReferralsPage() {
     }, 250);
   };
 
+  const openSavedSummaryDialog = () => {
+    if (!selectedPatient) {
+      toast.error("Select a patient before viewing saved summaries");
+      return;
+    }
+    const patientSummaries = readSummaryQueue().filter((item) => item.patientId === selectedPatient.id);
+    setSavedSummaryItems(patientSummaries);
+    setSavedSummaryDialogOpen(true);
+  };
+
+  const loadSavedSummary = (item: DischargeSummaryQueueItem) => {
+    if (!selectedPatient) return;
+    const draftSnapshot = item.draftSnapshot ?? {
+      ...draft,
+      patientId: selectedPatient.id,
+      summaryMode: item.summaryMode,
+      doctorName: draft.doctorName,
+      doctors: draft.doctors,
+    };
+    setDraft((prev) => ({
+      ...createEmptyDraft(),
+      ...prev,
+      ...draftSnapshot,
+      patientId: selectedPatient.id,
+      updatedAt: new Date().toISOString(),
+    }));
+    setSavedSummaryDialogOpen(false);
+    toast.success(`Loaded saved ${item.summaryMode === "referral_summary" ? "referral" : "discharge"} summary`);
+  };
+
   const saveSummaryToQueue = (status: DischargeSummaryQueueItem["status"]) => {
     if (!selectedPatient) {
       toast.error("Select a patient before saving the summary");
       return;
     }
-    const item: DischargeSummaryQueueItem = {
-      id: createId(),
-      summaryId: nextSummaryId(draft.summaryMode),
+    const item = buildSummaryQueueItem({
       patientId: selectedPatient.id,
-      patientName: toUpper(selectedPatient.full_name),
+      patientName: selectedPatient.full_name,
       summaryMode: draft.summaryMode,
-      preparedAt: new Date().toISOString(),
       status,
-    };
+      draft: {
+        ...draft,
+        patientId: selectedPatient.id,
+        summaryMode: draft.summaryMode,
+        updatedAt: new Date().toISOString(),
+      },
+    });
     try {
-      const existing = JSON.parse(window.localStorage.getItem(DISCHARGE_SUMMARY_QUEUE_KEY) || "[]") as DischargeSummaryQueueItem[];
-      const next = [item, ...(Array.isArray(existing) ? existing : [])].slice(0, 100);
+      const existing = readSummaryQueue();
+      const next = [item, ...existing].slice(0, 100);
       window.localStorage.setItem(DISCHARGE_SUMMARY_QUEUE_KEY, JSON.stringify(next));
       toast.success(status === "draft" ? "Summary saved as draft" : "Summary saved");
     } catch {
@@ -933,17 +1167,18 @@ function ReferralsPage() {
     writeBlock(draft.summaryMode === "referral_summary" ? "Referral ID" : "Discharge ID", summaryId);
     writeBlock("Patient Registration ID", selectedPatient.uhid);
     writeBlock("Patient Name", selectedPatient.full_name);
-    writeBlockIfValue("Age/Sex", `${selectedPatient.age ?? ""} / ${selectedPatient.gender ?? ""}`.replace(/^\s*\/\s*$/, ""));
+    writeBlockIfValue("Age/Gender", `${selectedPatient.age ?? ""} / ${selectedPatient.gender ?? ""}`.replace(/^\s*\/\s*$/, ""));
     writeBlockIfValue("Admission Date", formatDateDMY(draft.admissionDate));
     writeBlockIfValue("Discharge Date", formatDateDMY(draft.dischargeDate));
     const printableDoctors = draft.doctors.length > 0
       ? draft.doctors
-      : [{ id: "fallback", name: draft.doctorName, degree: "", details: "" }];
+      : [{ id: "fallback", name: draft.doctorName, degree: "", speciality: "", details: "" }];
     printableDoctors.forEach((doctor, index) => {
-      writeInlineBlock(index === 0 ? "Treating Doctor" : "Co-surgeon", [doctor.name, doctor.degree].filter(hasText).join("\n"));
+      const doctorMeta = [doctor.name, doctor.degree, doctor.speciality || doctor.details, doctor.details].filter(hasText).join("\n");
+      writeInlineBlock(index === 0 ? "Treating Doctor" : "Co-surgeon", doctorMeta);
     });
     writeBlockIfValue(draft.summaryMode === "referral_summary" ? "Referral Summary" : "Discharge Summary", draft.referralSummary);
-    writeBlockIfValue("Presenting Complaints", joinNonEmpty(draft.chiefComplaints));
+    writeBlockIfValue("Chief Complaints", joinNonEmpty(draft.chiefComplaints));
     writeBlockIfValue("Past Medical History", draft.patientHistory.toUpperCase());
     writeBlockIfValue("Allergies", draft.allergies.toUpperCase());
     writeBlockIfValue("Discharge Diagnosis", String(draft.provisionalDiagnosisText ?? "").toUpperCase());
@@ -952,6 +1187,9 @@ function ReferralsPage() {
     if (draft.surgicalProcedures.length > 0) writeBlock("Surgical Procedure", formatSurgicalProceduresForDocument(draft.surgicalProcedures));
     writeBlockIfValue("Medical Management", joinNonEmpty(draft.treatmentGiven));
     writeBlockIfValue("Other Advice", draft.doctorNotes);
+
+    const followUpPrintLabel = formatFollowUpAfterLabel(draft.followUpDays, draft.customFollowUpDays);
+    if (followUpPrintLabel) writeBlock("Follow Ups After", followUpPrintLabel);
 
     const medicationText = [...draft.savedMedicationEntries, ...draft.medication]
       .filter((med) => med.medicineName.trim().length > 0)
@@ -979,8 +1217,29 @@ function ReferralsPage() {
     writeBlockIfValue("Do's", joinNonEmpty(draft.dos));
     writeBlockIfValue("Don'ts", joinNonEmpty(draft.donts));
     writeBlockIfValue("Emergency Warnings", joinNonEmpty(draft.emergencyWarnings));
-    writeBlock("Doctor Signature", "____________________");
-    writeBlock("Doctor Name", draft.doctors[0] ? doctorDisplayName(draft.doctors[0]) : draft.doctorName || "-");
+
+    const footerY = pageHeight - 26;
+    const doctorFooterX = pageWidth - margin - 130;
+    const hospitalFooterX = pageWidth - margin - 35;
+    const signatureLineWidth = 62;
+    const alignedLabelY = footerY + 2;
+    const alignedLineY = alignedLabelY + 6;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text("Doctor Signature", doctorFooterX - 8, alignedLabelY);
+    doc.line(doctorFooterX - 8, alignedLineY, doctorFooterX + signatureLineWidth, alignedLineY);
+    doc.text("Hospital Seal", hospitalFooterX + 14, alignedLabelY);
+    doc.line(hospitalFooterX + 10, alignedLineY, hospitalFooterX + signatureLineWidth + 10, alignedLineY);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    const signatureDoctor = draft.doctors[0] || { name: draft.doctorName || "-", degree: "", speciality: "", details: "" };
+    const signatureLine = doctorSignatureLines(signatureDoctor);
+    doc.text(signatureLine.nameLine, doctorFooterX - 8, alignedLineY + 9);
+    if (signatureLine.degreeLine) {
+      doc.text(signatureLine.degreeLine, doctorFooterX - 8, alignedLineY + 16);
+    }
 
     const fileSafeName = selectedPatient.full_name.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "");
     doc.save(`referral-summary-${fileSafeName || "patient"}-${selectedPatient.uhid}.pdf`);
@@ -1004,7 +1263,7 @@ function ReferralsPage() {
               className="w-full bg-transparent py-2 text-sm outline-none"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by UHID, name or mobile"
+              placeholder="Search by first name, last name, locality, city, phone, email or UHID"
             />
           </div>
           <Select value={patientId} onValueChange={setPatientId}>
@@ -1012,9 +1271,9 @@ function ReferralsPage() {
               <SelectValue placeholder="Select patient to start draft" />
             </SelectTrigger>
             <SelectContent>
-              {(patients.data ?? []).slice().sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map((p) => (
+              {filteredPatients.slice().sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map((p) => (
                 <SelectItem key={p.id} value={p.id}>
-                  {p.full_name} · {p.uhid} · {p.phone}
+                  {p.full_name} · {p.uhid} · {p.phone || p.email || p.locality || p.city}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1114,7 +1373,7 @@ function ReferralsPage() {
           />
 
           <SmartMultiPicker
-            title="Presenting Complaints"
+            title="Chief Complaints"
             allItems={COMPLAINTS_LIBRARY}
             value={draft.chiefComplaints}
             onChange={(next) => setDraft((prev) => ({ ...prev, chiefComplaints: next }))}
@@ -1137,7 +1396,7 @@ function ReferralsPage() {
                   <Textarea
                     rows={8}
                     value={draft.patientHistory}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, patientHistory: toUpper(e.target.value) }))}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, patientHistory: e.target.value }))}
                     className="uppercase"
                     placeholder="PAST MEDICAL HISTORY"
                   />
@@ -1154,7 +1413,7 @@ function ReferralsPage() {
             <Textarea
               rows={3}
               value={draft.allergies}
-              onChange={(e) => setDraft((prev) => ({ ...prev, allergies: toUpper(e.target.value) }))}
+              onChange={(e) => setDraft((prev) => ({ ...prev, allergies: e.target.value }))}
               className="uppercase"
               placeholder="ALLERGIES"
             />
@@ -1235,7 +1494,7 @@ function ReferralsPage() {
                       <Input
                         id="new-medicine-name"
                         value={newMedicineName}
-                        onChange={(e) => setNewMedicineName(e.target.value)}
+                        onChange={(e) => setNewMedicineName(String(e.target.value ?? "").toUpperCase())}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             e.preventDefault();
@@ -1307,53 +1566,48 @@ function ReferralsPage() {
                   <Input
                     placeholder="Medicine name"
                     value={row.medicineName}
-                    onChange={(e) => updateMedication(row.id, { medicineName: toUpper(e.target.value) })}
+                    onChange={(e) => updateMedication(row.id, { medicineName: String(e.target.value ?? "").toUpperCase() })}
                   />
                   <Input
                     type="number"
                     min={0}
                     className="no-spinner"
-                    placeholder="Duration days"
-                    value={row.durationDays}
+                    placeholder="days"
+                    value={row.durationDays || ""}
                     onFocus={(e) => e.currentTarget.select()}
                     onChange={(e) => updateMedication(row.id, { durationDays: Number(e.target.value) || 0 })}
                   />
                   <Input
                     placeholder="Dose"
                     value={row.dose}
-                    onChange={(e) => updateMedication(row.id, { dose: toUpper(e.target.value) })}
+                    onChange={(e) => updateMedication(row.id, { dose: e.target.value })}
                   />
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                  <Tick
+                  <ScheduleRadio
                     label="OD"
-                    checked={row.morning}
-                    onCheckedChange={(checked) => updateMedication(row.id, { morning: checked })}
+                    selected={Boolean(row.morning)}
+                    onChange={() => applySingleMedicationSchedule(row.id, "OD", updateMedication)}
                   />
-                  <Tick
+                  <ScheduleRadio
                     label="BD"
-                    checked={row.afternoon}
-                    onCheckedChange={(checked) => updateMedication(row.id, { afternoon: checked })}
+                    selected={Boolean(row.afternoon)}
+                    onChange={() => applySingleMedicationSchedule(row.id, "BD", updateMedication)}
                   />
-                  <Tick
+                  <ScheduleRadio
                     label="TDS"
-                    checked={Boolean(row.tds)}
-                    onCheckedChange={(checked) => updateMedication(row.id, { tds: checked })}
+                    selected={Boolean(row.tds)}
+                    onChange={() => applySingleMedicationSchedule(row.id, "TDS", updateMedication)}
                   />
-                  <Tick
-                    label="NIGHT"
-                    checked={row.night}
-                    onCheckedChange={(checked) => updateMedication(row.id, { night: checked })}
-                  />
-                  <Tick
+                  <ScheduleRadio
                     label="HS"
-                    checked={Boolean(row.hs)}
-                    onCheckedChange={(checked) => updateMedication(row.id, { hs: checked })}
+                    selected={Boolean(row.hs)}
+                    onChange={() => applySingleMedicationSchedule(row.id, "HS", updateMedication)}
                   />
-                  <Tick
+                  <ScheduleRadio
                     label="SOS"
-                    checked={Boolean(row.sos)}
-                    onCheckedChange={(checked) => updateMedication(row.id, { sos: checked })}
+                    selected={Boolean(row.sos)}
+                    onChange={() => applySingleMedicationSchedule(row.id, "SOS", updateMedication)}
                   />
                   <Select
                     value={row.foodTiming}
@@ -1381,54 +1635,143 @@ function ReferralsPage() {
           </div>
 
           <div className="space-y-2">
-            <Label>Saved med for patient</Label>
-            <Select value={selectedSavedMedicineIdLocal} onValueChange={setSelectedSavedMedicineIdLocal}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select saved med for patient" />
-              </SelectTrigger>
-              <SelectContent>
-                {patientMedicineLibrary.length === 0 ? (
-                  <SelectItem value="no-saved-medicines" disabled>No saved medicines for this patient</SelectItem>
-                ) : (
-                  patientMedicineLibrary
-                    .slice()
-                    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
-                    .map((item) => {
-                      const prescribed = [...draft.savedMedicationEntries, ...draft.medication].some(
-                        (row) => hasText(row.medicineName) && row.medicineName.trim().toLowerCase() === item.name.trim().toLowerCase() && (row.medicineType ?? "TAB") === item.type,
-                      );
-                      return (
-                        <SelectItem key={item.id} value={item.id}>
-                          {item.type} - {item.name} · {prescribed ? "PRESCRIBED" : "NOT PRESCRIBED"}
-                        </SelectItem>
-                      );
-                    })
-                )}
-              </SelectContent>
-            </Select>
-            {selectedSavedMedicineIdLocal && (
-              <p className="text-xs text-muted-foreground">
-                {(() => {
-                  const selected = patientMedicineLibrary.find((item) => item.id === selectedSavedMedicineIdLocal);
-                  if (!selected) return "Saved medicine not found.";
+            <Label>Saved Medicines</Label>
+            {patientMedicineLibrary.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No saved medicines for this patient</p>
+            ) : (
+              <div className="space-y-2">
+                {patientMedicineLibrary
+                  .slice()
+                  .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                  .map((item) => {
                     const prescribed = [...draft.savedMedicationEntries, ...draft.medication].some(
-                    (row) => hasText(row.medicineName) && row.medicineName.trim().toLowerCase() === selected.name.trim().toLowerCase() && (row.medicineType ?? "TAB") === selected.type,
-                  );
-                  return `${selected.type} - ${selected.name}: ${prescribed ? "PRESCRIBED" : "NOT PRESCRIBED"}`;
-                })()}
-              </p>
+                      (row) => hasText(row.medicineName) && row.medicineName.trim().toLowerCase() === item.name.trim().toLowerCase() && (row.medicineType ?? "TAB") === item.type,
+                    );
+                    const [editMode, setEditMode] = useState(false);
+                    const [editedName, setEditedName] = useState(item.name);
+                    const [editedType, setEditedType] = useState<MedicationRow["medicineType"]>(item.type);
+                    const [editedDose, setEditedDose] = useState(item.suggestedDose ?? "");
+
+                    const saveEditedMedicine = () => {
+                      const nextItem = {
+                        ...item,
+                        name: normalizeDetail(editedName.trim()).toUpperCase(),
+                        type: editedType,
+                        suggestedDose: normalizeDetail(editedDose.trim()),
+                      };
+
+                      if (!nextItem.name) return;
+
+                      const nextLibrary = patientMedicineLibrary.map((entry) => (entry.id === item.id ? nextItem : entry));
+                      persistPatientMedicineLibrary(nextLibrary);
+                      const globalLibrary = medicineLibrary.map((entry) => (entry.id === item.id ? nextItem : entry));
+                      persistMedicineLibrary(globalLibrary);
+                      setEditMode(false);
+                    };
+
+                    return (
+                      <div key={item.id} className="rounded-lg border border-border/50 p-2 text-xs">
+                        {editMode ? (
+                          <div className="space-y-2">
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <Select value={editedType} onValueChange={(value) => setEditedType(value as MedicationRow["medicineType"])}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {MEDICINE_TYPES.map((type) => (
+                                    <SelectItem key={type} value={type}>{type}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Input value={editedName} onChange={(e) => setEditedName(e.target.value)} />
+                            </div>
+                            <Input value={editedDose} onChange={(e) => setEditedDose(e.target.value)} placeholder="Dose (OD / BD / SOS)" />
+                            <div className="flex gap-2">
+                              <Button type="button" size="sm" variant="secondary" onClick={saveEditedMedicine}>Save</Button>
+                              <Button type="button" size="sm" variant="outline" onClick={() => setEditMode(false)}>Cancel</Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <div className="font-medium">{item.type} - {item.name}</div>
+                              {item.suggestedDose ? <div className="text-[11px] text-muted-foreground">Dose: {item.suggestedDose}</div> : null}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => setEditMode(true)}>Edit</Button>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                className="h-6 px-2 text-xs"
+                                onClick={() => {
+                                  const newRow = { ...EMPTY_MEDICATION_ROW, id: createId(), medicineName: item.name, medicineType: item.type, dose: item.suggestedDose };
+                                  setDraft((prev) => ({
+                                    ...prev,
+                                    medication: [...prev.medication, newRow],
+                                  }));
+                                }}
+                                disabled={prescribed}
+                              >
+                                {prescribed ? "PRESCRIBED" : "ADD"}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
             )}
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="doctorNotes">Other Advice</Label>
+            <Label htmlFor="doctorNotes">Doctor's Comments</Label>
             <Textarea
               id="doctorNotes"
               rows={6}
               value={draft.doctorNotes}
-              onChange={(e) => setDraft((prev) => ({ ...prev, doctorNotes: toUpper(e.target.value) }))}
-              placeholder="OTHER ADVICE"
+              onChange={(e) => setDraft((prev) => ({ ...prev, doctorNotes: e.target.value }))}
+              placeholder="DOCTOR'S COMMENTS"
             />
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Follow Ups After</Label>
+              <Select
+                value={String(draft.followUpDays)}
+                onValueChange={(value) =>
+                  setDraft((prev) => ({ ...prev, followUpDays: Number(value) as FollowUpPreset | 0 }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {FOLLOW_UP_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={String(option.value)}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {draft.followUpDays === 0 && (
+              <div className="space-y-2">
+                <Label htmlFor="customFollowUp">Custom days</Label>
+                <Input
+                  id="customFollowUp"
+                  type="number"
+                  min={1}
+                  value={draft.customFollowUpDays || ""}
+                  onChange={(e) =>
+                    setDraft((prev) => ({ ...prev, customFollowUpDays: Number(e.target.value) || 0 }))
+                  }
+                />
+              </div>
+            )}
           </div>
 
           <div className="space-y-3 rounded-2xl border border-border/70 p-3">
@@ -1467,7 +1810,7 @@ function ReferralsPage() {
                         setDraft((prev) => ({ ...prev, dischargedWithoutConsent: Boolean(checked) }))
                       }
                     />
-                    PATIENT DISCHARGE WITHOUT DOCTOR CONSENT
+                    PATIENT DISCHARGED WITHOUT DOCTOR CONSENT
                   </label>
                 </div>
 
@@ -1485,48 +1828,11 @@ function ReferralsPage() {
                 id="patientConditionDuringDischarge"
                 rows={8}
                 value={draft.patientConditionDuringDischarge}
-                onChange={(e) => setDraft((prev) => ({ ...prev, patientConditionDuringDischarge: toUpper(e.target.value) }))}
+                onChange={(e) => setDraft((prev) => ({ ...prev, patientConditionDuringDischarge: e.target.value }))}
                 className="uppercase"
                 placeholder="PATIENT CONDITION DURING DISCHARGE"
               />
             </div>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Follow Ups Advice</Label>
-              <Select
-                value={String(draft.followUpDays)}
-                onValueChange={(value) =>
-                  setDraft((prev) => ({ ...prev, followUpDays: Number(value) as FollowUpPreset | 0 }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {FOLLOW_UP_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={String(option.value)}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {draft.followUpDays === 0 && (
-              <div className="space-y-2">
-                <Label htmlFor="customFollowUp">Custom days</Label>
-                <Input
-                  id="customFollowUp"
-                  type="number"
-                  min={1}
-                  value={draft.customFollowUpDays || ""}
-                  onChange={(e) =>
-                    setDraft((prev) => ({ ...prev, customFollowUpDays: Number(e.target.value) || 0 }))
-                  }
-                />
-              </div>
-            )}
           </div>
 
           <SmartMultiPicker
@@ -1572,7 +1878,7 @@ function ReferralsPage() {
                 id="referralReason"
                 placeholder="Need higher center ICU support"
                 value={draft.referralReason}
-                onChange={(e) => setDraft((prev) => ({ ...prev, referralReason: toUpper(e.target.value) }))}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referralReason: e.target.value }))}
               />
             </div>
 
@@ -1580,12 +1886,12 @@ function ReferralsPage() {
               <Input
                 placeholder="Referred hospital"
                 value={draft.referredHospital}
-                onChange={(e) => setDraft((prev) => ({ ...prev, referredHospital: toUpper(e.target.value) }))}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referredHospital: e.target.value }))}
               />
               <Input
                 placeholder="Department"
                 value={draft.referredDepartment}
-                onChange={(e) => setDraft((prev) => ({ ...prev, referredDepartment: toUpper(e.target.value) }))}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referredDepartment: e.target.value }))}
               />
             </div>
 
@@ -1593,12 +1899,12 @@ function ReferralsPage() {
               <Input
                 placeholder="Referred doctor"
                 value={draft.referredDoctor}
-                onChange={(e) => setDraft((prev) => ({ ...prev, referredDoctor: toUpper(e.target.value) }))}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referredDoctor: e.target.value }))}
               />
               <Input
                 placeholder="Transfer mode"
                 value={draft.transferMode}
-                onChange={(e) => setDraft((prev) => ({ ...prev, transferMode: toUpper(e.target.value) }))}
+                onChange={(e) => setDraft((prev) => ({ ...prev, transferMode: e.target.value }))}
               />
             </div>
 
@@ -1627,7 +1933,7 @@ function ReferralsPage() {
                 id="referralSummary"
                 rows={7}
                 value={draft.referralSummary}
-                onChange={(e) => setDraft((prev) => ({ ...prev, referralSummary: toUpper(e.target.value) }))}
+                onChange={(e) => setDraft((prev) => ({ ...prev, referralSummary: e.target.value }))}
                 placeholder="History, key findings, treatment done and reason for transfer"
               />
             </div>
@@ -1651,10 +1957,11 @@ function ReferralsPage() {
               </p>
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-3">
+            <div className="grid gap-2 sm:grid-cols-4">
               <Button type="button" variant="outline" onClick={() => saveSummaryToQueue("draft")}>Save as draft</Button>
               <Button type="button" onClick={printReferral}>Print</Button>
               <Button type="button" variant="secondary" onClick={() => saveSummaryToQueue("saved")}>Save</Button>
+              <Button type="button" variant="secondary" onClick={openSavedSummaryDialog}>View Saved Patient</Button>
             </div>
           </SectionCard>
         )}
@@ -1667,15 +1974,58 @@ function ReferralsPage() {
               </h2>
               <p className="text-xs text-muted-foreground">Discharge summary is included in the clinical record.</p>
             </header>
-            <div className="grid gap-2 sm:grid-cols-3">
+            <div className="grid gap-2 sm:grid-cols-4">
               <Button type="button" variant="outline" onClick={() => saveSummaryToQueue("draft")}>Save as draft</Button>
               <Button type="button" onClick={printReferral}>Print</Button>
               <Button type="button" variant="secondary" onClick={() => saveSummaryToQueue("saved")}>Save</Button>
+              <Button type="button" variant="secondary" onClick={openSavedSummaryDialog}>View Saved Patient</Button>
             </div>
           </div>
         )}
 
       </section>
+
+      <Dialog open={savedSummaryDialogOpen} onOpenChange={setSavedSummaryDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Saved patient summaries</DialogTitle>
+            <DialogDescription>Open a saved discharge or referral draft to review the completed patient details.</DialogDescription>
+          </DialogHeader>
+          {savedSummaryItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No saved summaries found for this patient yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {savedSummaryItems.slice(0, 12).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="w-full rounded-xl border border-border bg-muted/30 p-3 text-left transition hover:border-primary/70 hover:bg-muted/50"
+                  onClick={() => loadSavedSummary(item)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">{item.patientName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {item.summaryMode === "referral_summary" ? "Referral" : "Discharge"} · {item.summaryId}
+                      </p>
+                    </div>
+                    <Badge variant={item.status === "draft" ? "outline" : "secondary"}>{item.status.toUpperCase()}</Badge>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">Saved: {new Date(item.preparedAt).toLocaleString()}</p>
+                  <p className="mt-3 line-clamp-3 text-xs text-foreground/90">
+                    {item.draftSnapshot?.referralSummary || item.draftSnapshot?.patientConditionDuringDischarge || item.draftSnapshot?.doctorNotes || "No summary text stored in this saved record."}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="outline">Close</Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <section className="neo mt-5 p-4 text-sm text-muted-foreground">
         <p className="font-medium text-foreground">Architecture readiness highlights</p>
@@ -1846,7 +2196,7 @@ function SurgicalProcedureEditor({
               autoFocus
               rows={8}
               value={newProcedure}
-              onChange={(e) => setNewProcedure(toUpper(e.target.value))}
+              onChange={(e) => setNewProcedure(e.target.value)}
               placeholder="ENTER SURGICAL PROCEDURE"
             />
             <DialogFooter>
@@ -1904,7 +2254,7 @@ function SurgicalProcedureEditor({
                 <Textarea
                   rows={3}
                   value={editingFinding}
-                  onChange={(e) => setEditingFinding(toUpper(e.target.value))}
+                  onChange={(e) => setEditingFinding(e.target.value)}
                   placeholder="Write unusual finding or surgeon note"
                 />
               ) : (
@@ -2308,7 +2658,7 @@ function InvestigationEditor({
                         onChange={(e) =>
                           setResultsByParameter((prev) => ({
                             ...prev,
-                            [parameter.id]: toUpper(e.target.value),
+                            [parameter.id]: e.target.value,
                           }))
                         }
                         placeholder="Enter result"
@@ -2340,8 +2690,19 @@ function InvestigationEditor({
         ) : (
           value.map((investigation) => (
             <div key={investigation.id} className="rounded-xl bg-muted/40 p-2 text-xs">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <p className="font-medium text-foreground">{investigation.testName}</p>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <input
+                  className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+                  value={investigation.testName}
+                  onChange={(e) =>
+                    onChange(
+                      value.map((item) =>
+                        item.id === investigation.id ? { ...item, testName: e.target.value } : item,
+                      ),
+                    )
+                  }
+                  disabled={investigation.testId === ALL_REPORTS_ATTACHED_TEST_ID}
+                />
                 <Button
                   type="button"
                   variant="destructive"
@@ -2355,15 +2716,67 @@ function InvestigationEditor({
               {investigation.testId === ALL_REPORTS_ATTACHED_TEST_ID ? (
                 <p className="mb-1 text-xs text-muted-foreground">This will print as: ALL REPORTS ATTACHED</p>
               ) : null}
-              <div className="space-y-1 text-muted-foreground">
-                {investigation.parameters
-                  .filter((parameter) => parameter.result.trim().length > 0)
-                  .map((parameter) => (
-                    <p key={parameter.id}>
-                      {parameter.name}: {parameter.result}
-                      {parameter.unit ? ` ${parameter.unit}` : ""}
-                    </p>
-                  ))}
+              <div className="space-y-2 text-muted-foreground">
+                {investigation.parameters.map((parameter) => (
+                  <div key={parameter.id} className="grid gap-1.5 sm:grid-cols-[1.2fr_1fr_1.5fr]">
+                    <input
+                      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+                      value={parameter.name}
+                      onChange={(e) =>
+                        onChange(
+                          value.map((item) =>
+                            item.id === investigation.id
+                              ? {
+                                  ...item,
+                                  parameters: item.parameters.map((entry) =>
+                                    entry.id === parameter.id ? { ...entry, name: e.target.value } : entry,
+                                  ),
+                                }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                    <input
+                      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+                      value={parameter.normalRange ?? ""}
+                      onChange={(e) =>
+                        onChange(
+                          value.map((item) =>
+                            item.id === investigation.id
+                              ? {
+                                  ...item,
+                                  parameters: item.parameters.map((entry) =>
+                                    entry.id === parameter.id ? { ...entry, normalRange: e.target.value } : entry,
+                                  ),
+                                }
+                              : item,
+                          ),
+                        )
+                      }
+                      placeholder="Range"
+                    />
+                    <input
+                      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+                      value={parameter.unit ?? ""}
+                      onChange={(e) =>
+                        onChange(
+                          value.map((item) =>
+                            item.id === investigation.id
+                              ? {
+                                  ...item,
+                                  parameters: item.parameters.map((entry) =>
+                                    entry.id === parameter.id ? { ...entry, unit: e.target.value } : entry,
+                                  ),
+                                }
+                              : item,
+                          ),
+                        )
+                      }
+                      placeholder="Unit"
+                    />
+                  </div>
+                ))}
               </div>
             </div>
           ))
@@ -2392,6 +2805,7 @@ function SmartMultiPicker({
 }) {
   const [selectedItem, setSelectedItem] = useState("");
   const [customItem, setCustomItem] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [storedItems, setStoredItems] = useState<string[]>([]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
 
@@ -2411,6 +2825,12 @@ function SmartMultiPicker({
     () => Array.from(new Set([...allItems, ...storedItems])).sort((a, b) => a.localeCompare(b)),
     [allItems, storedItems],
   );
+
+  const filteredItems = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return mergedItems;
+    return mergedItems.filter((item) => item.toLowerCase().includes(term));
+  }, [mergedItems, searchTerm]);
 
   const toggle = (item: string) => {
     const normalizedItem = toUpper(item);
@@ -2460,20 +2880,39 @@ function SmartMultiPicker({
         <p className="text-sm font-medium">{title}</p>
         <Badge variant="secondary">{value.length} selected</Badge>
       </div>
-      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-        <Select value={selectedItem} onValueChange={setSelectedItem} disabled={disabled}>
-          <SelectTrigger>
-            <SelectValue placeholder={`Select ${title.toLowerCase()}`} />
-          </SelectTrigger>
-          <SelectContent>
-            {mergedItems.map((item) => (
-              <SelectItem key={item} value={item}>{toUpper(item)}</SelectItem>
+      <div className="space-y-2">
+        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+          <Input
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setSelectedItem(e.target.value);
+            }}
+            placeholder={`Search or type ${title.toLowerCase()}`}
+            disabled={disabled}
+          />
+          <Button type="button" variant="secondary" onClick={() => { const next = normalizeDetail(searchTerm.trim()); if (next) { toggle(next); setSearchTerm(""); setSelectedItem(""); } }} disabled={disabled || !searchTerm.trim()}>
+            Add
+          </Button>
+        </div>
+        {filteredItems.length > 0 && (
+          <div className="max-h-40 overflow-y-auto rounded-md border border-border/70 bg-background p-2 text-xs">
+            {filteredItems.map((item) => (
+              <button
+                key={item}
+                type="button"
+                className="block w-full rounded-md px-2 py-1 text-left hover:bg-muted"
+                onClick={() => {
+                  toggle(item);
+                  setSearchTerm("");
+                  setSelectedItem("");
+                }}
+              >
+                {toUpper(item)}
+              </button>
             ))}
-          </SelectContent>
-        </Select>
-        <Button type="button" variant="secondary" onClick={addSelectedItem} disabled={disabled || !selectedItem}>
-          Add
-        </Button>
+          </div>
+        )}
       </div>
       {addLabel && (
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
@@ -2489,7 +2928,7 @@ function SmartMultiPicker({
               autoFocus
               rows={4}
               value={customItem}
-              onChange={(e) => setCustomItem(toUpper(e.target.value))}
+              onChange={(e) => setCustomItem(e.target.value)}
               placeholder={`ENTER ${title.toUpperCase()}`}
             />
             <DialogFooter>
@@ -2511,6 +2950,23 @@ function SmartMultiPicker({
         </div>
       )}
     </div>
+  );
+}
+
+function ScheduleRadio({
+  label,
+  selected,
+  onChange,
+}: {
+  label: string;
+  selected: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <label className="inline-flex items-center gap-1.5 text-xs">
+      <input type="radio" checked={selected} onChange={onChange} />
+      <span>{label}</span>
+    </label>
   );
 }
 
@@ -2553,7 +3009,7 @@ function PatientInfoBanner({
       </p>
       <div className="grid gap-1 sm:grid-cols-2">
         <p>PATIENT NAME: <span className="font-medium text-foreground">{name}</span></p>
-        <p>AGE/SEX: <span className="font-medium text-foreground">{age} / {gender}</span></p>
+        <p>AGE/GENDER: <span className="font-medium text-foreground">{age} / {gender}</span></p>
         <p>ADMISSION DATE: <span className="font-medium text-foreground">{formatDateDMY(admissionDate) || "-"}</span></p>
         <p>DISCHARGE DATE: <span className="font-medium text-foreground">{formatDateDMY(dischargeDate) || "-"}</span></p>
       </div>
@@ -2573,6 +3029,7 @@ function DoctorPicker({
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [name, setName] = useState("");
   const [degree, setDegree] = useState("");
+  const [speciality, setSpeciality] = useState("");
   const [details, setDetails] = useState("");
 
   useEffect(() => {
@@ -2584,9 +3041,13 @@ function DoctorPicker({
           parsed
             .filter((doctor) => doctor?.id && doctor?.name)
             .map((doctor) =>
-              doctor.id === DEFAULT_DOCTOR_PROFILE.id || doctor.name.toUpperCase().includes("ARCHANA TIWARI PANDEY")
-                ? DEFAULT_DOCTOR_PROFILE
-                : doctor,
+              doctor.id === DEFAULT_DOCTOR_PROFILE.id || doctor.name.toUpperCase().includes("SUSHIL KR PANDEY")
+                ? { ...DEFAULT_DOCTOR_PROFILE, speciality: DEFAULT_DOCTOR_PROFILE.speciality }
+                : {
+                    ...doctor,
+                    speciality: doctor.speciality || doctor.details || "",
+                    details: doctor.details || "",
+                  },
             ),
         );
       }
@@ -2605,6 +3066,7 @@ function DoctorPicker({
       id: createId(),
       name: toUpper(name.trim()),
       degree: toUpper(degree.trim()),
+      speciality: toUpper(speciality.trim()),
       details: toUpper(details.trim()),
     };
     if (!nextDoctor.name) {
@@ -2616,6 +3078,7 @@ function DoctorPicker({
     onChange([...value, nextDoctor]);
     setName("");
     setDegree("");
+    setSpeciality("");
     setDetails("");
     setIsDialogOpen(false);
   };
@@ -2638,7 +3101,8 @@ function DoctorPicker({
             <div className="space-y-3">
               <div className="space-y-1"><Label>Doctor name</Label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="DR FULL NAME" /></div>
               <div className="space-y-1"><Label>Degree</Label><Input value={degree} onChange={(event) => setDegree(event.target.value)} placeholder="MBBS, MS, MD" /></div>
-              <div className="space-y-1"><Label>Role / speciality</Label><Input value={details} onChange={(event) => setDetails(event.target.value)} placeholder="CONSULTANT SURGEON" /></div>
+              <div className="space-y-1"><Label>Speciality</Label><Input value={speciality} onChange={(event) => setSpeciality(event.target.value)} placeholder="GENERAL SURGERY, ORTHOPAEDICS, GYNAECOLOGY" /></div>
+              <div className="space-y-1"><Label>Other details</Label><Input value={details} onChange={(event) => setDetails(event.target.value)} placeholder="CONSULTANT / REG.NO./ ROLE" /></div>
             </div>
             <DialogFooter>
               <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
